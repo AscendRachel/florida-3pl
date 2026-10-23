@@ -1,0 +1,6 @@
+# the app's own data: orders, returns, logins, uploads, settings. Never upload these.
+data/
+__pycache__/
+*.pyc
+server.log
+*.tmp
