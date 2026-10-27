@@ -1,0 +1,34 @@
+# The app behind Caddy: people open https://your-domain (no port number). Needs a DNS A record for the domain that points to
+# this server, and ports 80 and 443 open on it.
+#   1. copy .env.example to .env and set DOMAIN
+#   2. docker compose -f docker-compose.caddy.yml up -d
+services:
+  app:
+    image: ascendrachel/florida-3pl:latest
+    container_name: florida-3pl
+    restart: unless-stopped
+    expose:
+      - "8765"            # only Caddy can reach it; it is not published on the server
+    volumes:
+      - ./data:/app/data  # orders, returns, logins, uploads: keep this folder and back it up
+
+  caddy:
+    image: caddy:2
+    container_name: florida-3pl-caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in the .env file, for example orders.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

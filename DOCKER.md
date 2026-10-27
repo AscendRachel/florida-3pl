@@ -37,6 +37,26 @@ docker compose restart        # restart
 docker compose down           # stop (the data stays)
 ```
 
-## Using it from the internet (US team)
-Do not expose port 8765 directly. Put an HTTPS reverse proxy in front (Caddy, Nginx, Cloudflare Tunnel) that passes
-`X-Forwarded-Proto: https`, so sign-in cookies are marked Secure.
+## Using it from the internet with a domain (no port number) - Caddy
+Caddy gives the app HTTPS and a normal address like https://orders.yourcompany.com. Do not open port 8765 to the internet.
+
+1. In your DNS, add an **A record** for the name you want (for example `orders`) that points to the server's IP.
+2. On the server, copy `.env.example` to `.env` and set `DOMAIN=orders.yourcompany.com`.
+3. Start the app and Caddy together:
+```
+docker compose -f docker-compose.caddy.yml up -d
+```
+4. Open https://orders.yourcompany.com. Ports 80 and 443 must be open on the server (Caddy needs 80 to get the certificate).
+5. Create the first admin as above, using the same file:
+```
+docker compose -f docker-compose.caddy.yml exec app python server.py create-admin
+```
+
+If the server **already runs its own Caddy**, do not start a second one. Add this to the existing Caddyfile and make sure both
+containers share a Docker network (use the app container name `florida-3pl`):
+```
+orders.yourcompany.com {
+	reverse_proxy florida-3pl:8765
+}
+```
+Caddy sends `X-Forwarded-Proto: https` by itself, which is what the app needs to mark sign-in cookies as Secure.
