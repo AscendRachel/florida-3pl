@@ -1,6 +1,6 @@
 // Returns: the warehouse's customer returns, synced by the server from the master returns sheet.
 // The warehouse edits only its own columns (Shipped to Amazon, warehouse notes); the rest comes from the sync.
-import { $, ago, api, debounce, dialog, easternMs, esc, fmt, store, toast } from "./util.js";
+import { $, ago, api, brand, debounce, dialog, easternMs, esc, fmt, store, toast } from "./util.js";
 import { lockReason, lockTip, protectDialog, renameDialog } from "./protect.js";
 
 // k: field name, kind: text | num | date | select | bool | link | img, edit: the warehouse can change it here
@@ -72,7 +72,7 @@ export async function mount(el, params, ctx) {
   const visible = () => COLS.filter((c) => !hidden.has(c.k));
   const valueOf = (r, c) => (c.k === "image" ? r.image || "" : r[c.k] ?? "");
 
-  el.innerHTML = `<div class="section-head"><div><div class="eyebrow">Greentek</div><h2>Returns</h2>
+  el.innerHTML = `<div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>Returns</h2>
       <p>Customer returns for this warehouse. They are read from the master returns sheet; tick <b>Shipped to Amazon</b> when you send one back.</p></div></div>
     <div class="panel syncbar" id="syncbar"></div>
     <div class="qgrid cards" id="cards"></div>

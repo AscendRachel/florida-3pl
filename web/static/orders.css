@@ -180,7 +180,7 @@
 
 /* dashboard */
 .dash-date { align-items: flex-end; }
-.dash-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.dash-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .dash-card { margin: 0; align-items: center; }
 .dash-n { font-size: 34px; font-weight: 700; line-height: 1; min-width: 64px; }
 .dash-l { font-weight: 600; }
@@ -209,3 +209,12 @@ main:has(.dash-cards) .section-head { margin-bottom: 10px; }
 /* Returns header: the name and the filter button sit in the vertical middle of the header row */
 .rt th { vertical-align: middle; line-height: 1.2; }
 .rt th .th-in { min-height: 32px; align-items: center; }
+
+/* dashboard cards: a long number never runs into the label */
+.dash-n { flex: none; }
+.dash-l { min-width: 0; overflow-wrap: anywhere; }
+.dash-card { gap: 14px; }
+
+/* Scan: count the items in a package */
+.sc-count { display: flex; gap: 10px; align-items: flex-end; margin: 8px 0 4px; flex-wrap: wrap; }
+.sc-count input { width: 120px; font-size: 20px; font-weight: 700; }

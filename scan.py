@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 # the date column stamped by each shipping step -> the kind of ship event
 SHIP_KINDS = {"SHIPPED TO  CUSTOMER DATE": "customer", "SHIPPED TO  AMAZON DATE": "amazon"}
 OVERDUE_HOURS = 24
+# The note a short count leaves in the Notes column. It is one line that starts like this, so it can be replaced and removed alone.
+PARTIAL_NOTE = re.compile(r"(?m)^Partial delivery: [^\n]*(\n|$)")
 DRIVE_ID = re.compile(r"/d/([-\w]{25,})")
 TBA_SEPARATOR = "|"
 
@@ -43,8 +45,38 @@ OUTCOMES = {
     "hold": ("HOLD: MORE PIECES COMING", "warn", None),
     "overdue": ("OVERDUE HOLD WARNING", "crit", "ship_overdue"),
     "nolabel": ("NO LABEL FOUND", "crit", None),
+    "count": ("COUNT THE ITEMS", "info", None),
 }
 _label_cache = {}
+
+
+def with_partial_note(notes, received, qty):
+    """Notes with the "1 of 2 items received" line added (or updated); whatever else is in Notes stays."""
+    rest = without_partial_note(notes)
+    line = f"Partial delivery: {received} of {qty} items received"
+    return f"{rest}\n{line}" if rest else line
+
+
+def without_partial_note(notes):
+    return PARTIAL_NOTE.sub("", notes or "").strip()
+
+
+def delivered_cleanup(orders, rn, note="Delivered"):
+    """A row that is now Delivered is no longer waiting for items: untick ITEM ON HOLD, clear the Hold Date and take out the
+    partial-delivery note. Returns the cells it changed ({column name: new value}), empty when there was nothing to do."""
+    d = orders.get(rn)
+    if not d:
+        return {}
+    writes = {}
+    if d["ITEM ON HOLD"] == "TRUE":
+        writes["ITEM ON HOLD"] = "FALSE"
+        if d["Hold Date"]:
+            writes["Hold Date"] = ""
+    if PARTIAL_NOTE.search(d["Notes"]):
+        writes["Notes"] = without_partial_note(d["Notes"])
+    if writes:
+        orders.set(rn, writes, note=note)
+    return writes
 
 
 def now():
@@ -147,8 +179,10 @@ def siblings_on_hold(orders, d):
     return [{"label": x["Label Number"], "product": x["Product Name"]} for x in map(orders.dict, rows)]
 
 
-def evaluate(orders, d, code, dry):
-    """Decide the outcome for one order row and apply the box count / hold changes. Returns the result dict."""
+def evaluate(orders, d, code, dry, items=None):
+    """Decide the outcome for one order row and apply the box count / hold changes. Returns the result dict.
+    A row with QTY above 1 first asks the operator how many items are in the package (outcome "count"); the answer comes
+    back as `items`, is added to Items Received, and the label is held until Items Received reaches QTY."""
     db = orders.db
     if d["Tracking Status"] == "Return to Amazon":
         note = "It was already marked shipped to Amazon before." if d["Shipped to Amazon"] == "TRUE" else ""
@@ -164,7 +198,21 @@ def evaluate(orders, d, code, dry):
     expected = len(listed) if listed else max(1, to_int(d["Boxes Expected"], 1))
     received = to_int(d["Boxes Received"])
     seen = db.execute("SELECT 1 FROM boxes WHERE rn = ? AND code = ?", (d["rn"], code)).fetchone()
+    qty = max(1, to_int(d["QTY"], 1))
+    have_items = to_int(d.get("Items Received", ""))
+    if qty > 1 and not seen and items is None and have_items < qty:
+        res = result_for(d, "count", f"This order is for {qty} items. How many are in this package? Count them and confirm.",
+                         boxes={"received": received + 1, "expected": expected, "remaining": max(0, expected - received - 1)},
+                         qty_declared=qty, items_received=have_items)
+        return res
     writes = {}
+    total_items = have_items
+    if items is not None and not seen:
+        total_items = have_items + max(0, items)
+        writes["Items Received"] = str(total_items)
+    elif qty == 1 and received + (0 if seen else 1) >= expected and have_items < 1:
+        total_items = 1
+        writes["Items Received"] = "1"
     if not seen:
         received += 1
         writes["Boxes Received"] = str(received)
@@ -175,7 +223,9 @@ def evaluate(orders, d, code, dry):
     boxes = {"received": received, "expected": expected, "remaining": max(0, expected - received)}
     extra = {"boxes": boxes, "duplicate": bool(seen)}
 
-    if received >= expected:
+    short = qty > 1 and total_items < qty  # fewer items than the order's QTY have arrived so far
+    extra["items"] = {"received": total_items, "qty": qty}
+    if received >= expected and not short:
         if not DRIVE_ID.search(d["Shipping Label Link"]):
             if not dry:
                 orders.set(d["rn"], writes, note=f"Scan {code}")
@@ -194,10 +244,16 @@ def evaluate(orders, d, code, dry):
     writes["ITEM ON HOLD"] = "TRUE"
     if not d["Hold Date"] or d["ITEM ON HOLD"] != "TRUE":
         writes["Hold Date"] = stamp(now())
+    if short:  # leave a note in Notes: how many items have arrived so far
+        writes["Notes"] = with_partial_note(d["Notes"], total_items, qty)
     if not dry:
         orders.set(d["rn"], writes, note=f"Scan {code}")
     left = boxes["remaining"]
-    return result_for(d, "hold", f"{left} more box{'es' if left != 1 else ''} expected. Put the item on the hold shelf.", siblings=siblings_on_hold(orders, d), **extra)
+    if short:
+        msg = f"{total_items} of {qty} items received. Hold the label until the rest of the quantity is scanned. Put the item on the hold shelf."
+    else:
+        msg = f"{left} more box{'es' if left != 1 else ''} expected. Put the item on the hold shelf."
+    return result_for(d, "hold", msg, siblings=siblings_on_hold(orders, d), **extra)
 
 
 def scan(db, ix, code, operator, dry):
@@ -223,6 +279,23 @@ def scan(db, ix, code, operator, dry):
     if not found and not dry:
         log(db, operator, code, None, "notfound", "")
     return {"code": code, "found": bool(found), "practice": dry, "results": results}
+
+
+def count_items(db, ix, rn, code, items, operator, dry):
+    """The operator counted the items in the package of an order with QTY above 1: record it and decide again."""
+    code = (code or "").strip().upper()
+    if items < 0:
+        raise ValueError("Enter how many items are in the package.")
+    if items > 9999:
+        raise ValueError("That is too many items.")
+    orders = Orders(db, ix, operator)
+    d = orders.get(rn)
+    if not d:
+        raise ValueError("That order no longer exists.")
+    res = evaluate(orders, d, code, dry, items=items)
+    if not dry:
+        log(db, operator, code, rn, res["outcome"], f"counted {items}: " + res["message"][:180])
+    return {"code": code, "found": True, "practice": dry, "result": res}
 
 
 def release(db, ix, rn, operator, dry):
@@ -251,6 +324,8 @@ def confirm(db, ix, rn, kind, operator, dry, code=""):
             return {"already": True}
         writes = {"Label Used": "TRUE", "Shipped to Customer": "TRUE", "ITEM ON HOLD": "FALSE", "Hold Date": "",
                   "SHIPPED TO  CUSTOMER DATE": stamp(now()), "Updated by": operator}
+        if PARTIAL_NOTE.search(d["Notes"]):
+            writes["Notes"] = without_partial_note(d["Notes"])
         if d["Shipped to Amazon"] == "TRUE":  # the newest scan event wins: it is shipped to the customer now, not to Amazon (the old date is kept)
             writes["Shipped to Amazon"] = "FALSE"  # the date stays: it still counts as shipped by that operator
         if kind == "ship_overdue":
@@ -307,6 +382,7 @@ def holds(db, ix):
         expected = len(listed) if listed else max(1, to_int(d["Boxes Expected"], 1))
         hours = hold_hours(d)
         out.append({**describe(d), "received": to_int(d["Boxes Received"]), "expected": expected, "tracking": d["Source Tracking Number"],
+                    "items": to_int(d.get("Items Received", "")), "qty_total": max(1, to_int(d["QTY"], 1)),
                     "since": d["Hold Date"], "hours": None if hours is None else round(hours, 1),
                     "overdue": hours is not None and hours > OVERDUE_HOURS})
     out.sort(key=lambda x: (x["hours"] is None, -(x["hours"] or 0)))

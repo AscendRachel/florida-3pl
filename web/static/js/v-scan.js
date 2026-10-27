@@ -1,12 +1,12 @@
 // Scan: the 3PL scans the TBA number on each package; the app says what to do with every item in it.
-import { $, api, dialog, esc, fmt, store, toast } from "./util.js";
+import { $, api, brand, dialog, esc, fmt, store, toast } from "./util.js";
 import { labelPages, printPages, printTest } from "./print.js";
 
 const PILL = { ok: "s-ok", warn: "s-warn", crit: "s-crit", violet: "s-violet", info: "s-info", neutral: "s-neutral" };
 const OUTCOME_LABEL = {
   complete: ["Complete: shipped", "ok"], hold: ["Hold", "warn"], overdue: ["Overdue hold", "crit"], return: ["Return to Amazon", "violet"],
   voided: ["Voided / refunded", "crit"], pnr: ["Package not received", "crit"], processed: ["Already processed", "warn"],
-  nolabel: ["No label found", "crit"], notfound: ["Not found", "crit"], pnr_marked: ["Marked not received", "crit"], pnr_cleared: ["Flag removed", "neutral"], printed: ["Label printed", "ok"], printed_overdue: ["Overdue shipped", "warn"],
+  nolabel: ["No label found", "crit"], count: ["Counting items", "info"], notfound: ["Not found", "crit"], pnr_marked: ["Marked not received", "crit"], pnr_cleared: ["Flag removed", "neutral"], printed: ["Label printed", "ok"], printed_overdue: ["Overdue shipped", "warn"],
 };
 
 let audio;
@@ -33,7 +33,7 @@ export async function mount(el, params, ctx) {
   const operator = ctx.me.name; // whoever is signed in; the server records the scan under this account
   let queue = Promise.resolve(); // labels print one after the other
 
-  el.innerHTML = `<div class="section-head"><div><div class="eyebrow">Greentek</div><h2>Scan</h2>
+  el.innerHTML = `<div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>Scan</h2>
       <p>Scan the TBA number on each package (or type it and press Enter). The app shows every item in the package and what to do with it.</p></div></div>
     <div class="panel scanbar">
       <div class="signedas"><span class="muted">Scanning as</span><b>${esc(operator)}</b></div>
@@ -73,12 +73,15 @@ export async function mount(el, params, ctx) {
       <div class="sc-img">${/^https?:/.test(r.image) ? `<img src="${esc(r.image)}" alt="" referrerpolicy="no-referrer">` : ""}</div>
       <div class="sc-main">
         <div class="sc-top"><span class="pill ${PILL[r.tone]} sc-title">${esc(r.title)}</span>
-          ${b ? `<span class="pill s-neutral">Box ${b.received} of ${b.expected}</span>` : ""}${r.duplicate ? `<span class="pill s-info">Box already counted</span>` : ""}</div>
+          ${b ? `<span class="pill s-neutral">Box ${b.received} of ${b.expected}</span>` : ""}${r.items && r.items.qty > 1 ? `<span class="pill s-neutral">Items ${r.items.received} of ${r.items.qty}</span>` : ""}${r.duplicate ? `<span class="pill s-info">Box already counted</span>` : ""}</div>
         <h3>${esc(r.product || "(no product name)")}</h3>
         <div class="muted">${esc([r.brand, r.qty && `Qty ${r.qty}`, r.customer].filter(Boolean).join(" · "))}</div>
         <div class="muted mono">${esc(r.label)} · ${esc(r.store_order)} · ${esc(r.source_order)}</div>
         <p class="sc-msg">${esc(r.message)}</p>
         ${(r.siblings || []).length ? `<div class="banner sc-warn">Another item in this customer order is on hold: ${r.siblings.map((s) => esc(s.label)).join(", ")}</div>` : ""}
+        ${r.outcome === "count" ? `<form class="sc-count" data-count="${i}"><label class="field" style="margin:0"><span>Items in this package (the order is for ${r.qty_declared}${r.items_received ? `, ${r.items_received} already received` : ""})</span>
+          <input type="number" min="0" max="9999" inputmode="numeric" name="items" value="${r.qty_declared - r.items_received}" required></label>
+          <button class="btn primary" type="submit">Confirm count</button></form>` : ""}
         ${r.print ? `<div class="sc-print" id="pr${i}"></div>` : ""}
         ${["pnr", "voided"].includes(r.outcome) ? "" : `<div class="sc-pnr" id="pnr${i}"><button class="btn small danger" data-pnr="${i}">Package not received</button></div>`}
       </div></article>`;
@@ -172,6 +175,25 @@ export async function mount(el, params, ctx) {
     } catch (e) { toast(e.message, "bad"); }
   }
 
+  // ---------- the operator counted the items in a package whose order is for more than one
+  async function sendCount(form) {
+    const i = +form.dataset.count, r = lastRes.results[i], items = +form.elements.items.value;
+    form.querySelectorAll("input, button").forEach((x) => (x.disabled = true));
+    try {
+      const out = await api("/api/scan/count", { rn: r.rn, code: lastRes.code, items, dry: practice });
+      lastRes.results[i] = out.result;
+      const art = el.querySelector(`article[data-i="${i}"]`);
+      if (art) art.outerHTML = card(out.result, i);
+      if (sound) beep(out.result.tone === "crit" ? "bad" : out.result.tone === "warn" ? "warn" : "ok");
+      if (out.result.print) queue = queue.then(() => printBatch([{ r: out.result, i }], lastRes.code));
+      if (!practice) refreshSide();
+    } catch (e) {
+      toast(e.message, "bad");
+      form.querySelectorAll("input, button").forEach((x) => (x.disabled = false));
+    }
+    $("#scan").focus();
+  }
+
   // ---------- scanning
   let lastRes = null;
   async function doScan(code) {
@@ -191,7 +213,11 @@ export async function mount(el, params, ctx) {
     refreshSide();
   }
 
-  el.onsubmit = (e) => { e.preventDefault(); doScan($("#scan").value); };
+  el.onsubmit = (e) => {
+    e.preventDefault();
+    if (e.target.dataset?.count != null) sendCount(e.target);
+    else doScan($("#scan").value);
+  };
   el.onchange = (e) => {
     if (e.target.id === "practice") { practice = e.target.checked; store.set("gt_scan_practice", practice ? "1" : "0"); syncChrome(); }
     if (e.target.id === "sound") { sound = e.target.checked; store.set("gt_scan_sound", sound ? "1" : "0"); }
@@ -234,8 +260,8 @@ export async function mount(el, params, ctx) {
       const [h, r] = await Promise.all([api("/api/scan/holds"), api("/api/scan/recent")]);
       const od = h.holds.filter((x) => x.overdue).length;
       $("#holdNote").textContent = h.holds.length ? `${fmt(h.holds.length)} waiting${od ? ` · ${od} overdue` : ""}` : "";
-      $("#holds").innerHTML = h.holds.length ? `<div class="tablewrap" style="max-height:340px"><table style="min-width:0"><thead><tr><th>Item</th><th class="num">Boxes</th><th>On hold</th><th></th></tr></thead><tbody>${h.holds.slice(0, 100).map((x) =>
-        `<tr><td><b class="mono">${esc(x.label)}</b><div class="muted clip">${esc(x.product)}</div></td><td class="num">${x.received} / ${x.expected}</td>
+      $("#holds").innerHTML = h.holds.length ? `<div class="tablewrap" style="max-height:340px"><table style="min-width:0"><thead><tr><th>Item</th><th class="num">Boxes</th><th class="num">Items</th><th>On hold</th><th></th></tr></thead><tbody>${h.holds.slice(0, 100).map((x) =>
+        `<tr><td><b class="mono">${esc(x.label)}</b><div class="muted clip">${esc(x.product)}</div></td><td class="num">${x.received} / ${x.expected}</td><td class="num">${x.qty_total > 1 ? `${x.items} / ${x.qty_total}` : "—"}</td>
           <td>${x.hours == null ? "—" : `${x.hours >= 48 ? Math.round(x.hours / 24) + " d" : Math.round(x.hours) + " h"}`} ${x.overdue ? `<span class="pill s-crit">Overdue</span>` : ""}</td>
           <td>${x.overdue ? `<button class="btn small" data-release="${x.rn}">Ship now</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Nothing is on hold.</p>`;
       $("#recent").innerHTML = r.scans.length ? `<div class="tablewrap" style="max-height:340px"><table style="min-width:0"><tbody>${r.scans.map((s) => {

@@ -98,5 +98,17 @@ def compute(day, col, orders_db):
         {"key": "amazon", "label": "Total Shipped to Amazon", "n": one(f"SELECT COUNT(*) FROM orders WHERE {on('SHIPPED TO  AMAZON DATE')}", day)},
         {"key": "arrived", "label": "Packages Arrived Today", "n": one(f"SELECT COUNT(*) FROM orders WHERE {on('Delivered to Warehouse Date')}", day)},
     ]
-    return {"date": day, "cards": cards, "operators": [o["label"] for o in ops], "orders": hourly, "returns": store,
+    # the sheet's counter columns (RTS / RTA / Item on Hold / Store Returns / All Orders / Stock Counter): live totals, not by day
+    open_ = f"{col['Shipped to Amazon']} != 'TRUE' AND {col['Stock']} != 'TRUE'"
+    status = lambda v: one(f"SELECT COUNT(*) FROM orders WHERE {col['Tracking Status']} = '{v}' AND {open_}")
+    has_order = f"{col['Store Order No.']} != ''"
+    counters = [
+        {"key": "rts", "label": "RTS Counter", "note": "Return to Sender, not yet shipped to Amazon", "n": status("Return to Sender")},
+        {"key": "rta", "label": "RTA Counter", "note": "Return to Amazon, not yet shipped to Amazon", "n": status("Return to Amazon")},
+        {"key": "holdc", "label": "Item on Hold Counter", "note": "Items ticked on hold", "n": one(f"SELECT COUNT(*) FROM orders WHERE {col['ITEM ON HOLD']} = 'TRUE'")},
+        {"key": "storec", "label": "Store Returns Counter", "note": "Store Returns, not yet shipped to Amazon", "n": status("Store Returns")},
+        {"key": "allc", "label": "All Orders Counter", "note": "Orders not yet shipped to the customer", "n": one(f"SELECT COUNT(*) FROM orders WHERE {has_order} AND {col['Shipped to Customer']} != 'TRUE'")},
+        {"key": "stockc", "label": "Stock Counter", "note": "Orders taken from stock", "n": one(f"SELECT COUNT(*) FROM orders WHERE {has_order} AND {col['Stock']} = 'TRUE'")},
+    ]
+    return {"date": day, "cards": cards, "counters": counters, "operators": [o["label"] for o in ops], "orders": hourly, "returns": store,
             "orders_total": sum(h["total"] for h in hourly), "returns_total": sum(h["total"] for h in store)}

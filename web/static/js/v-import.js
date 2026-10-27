@@ -1,5 +1,5 @@
 // Import: upload the downloaded 3PL sheet (.xlsx or .csv), pick the orders tab, then replace or add to the orders.
-import { $, api, confirmBox, esc, fmt, toast } from "./util.js";
+import { $, api, brand, confirmBox, esc, fmt, toast } from "./util.js";
 
 export async function mount(el) {
   const meta = await api("/api/meta");
@@ -10,7 +10,7 @@ export async function mount(el) {
     : `<p class="muted">The app has no orders yet.</p>`;
 
   const draw = () => {
-    el.innerHTML = `<div class="section-head"><div><div class="eyebrow">Greentek</div><h2>Import</h2>
+    el.innerHTML = `<div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>Import</h2>
       <p>Download the 3PL Google Sheet (File → Download → Microsoft Excel .xlsx) and upload it here. The app finds the orders tab and loads it into All Orders.</p></div></div>
       <div class="panel">${current()}</div>
       <div class="card">

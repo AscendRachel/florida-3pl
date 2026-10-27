@@ -5,6 +5,8 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// the app's name and look, filled in from the server by branding.js
+export const brand = { name: "Florida 3PL", initials: "F3", color: "#1f7a4d", logo: "", v: 0 };
 export const fmt = (n) => (n ?? 0).toLocaleString();
 export const num = (v) => {
   if (v === null || v === undefined || v === "") return NaN;

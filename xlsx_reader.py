@@ -7,6 +7,25 @@ import re
 import zipfile
 from datetime import datetime, timedelta
 from xml.etree import ElementTree as ET
+from decimal import Decimal, InvalidOperation
+
+SCI = re.compile(r"-?\d+(\.\d+)?[eE]\+?\d+")
+
+
+def plain_number(text):
+    """Excel shows long numbers (tracking numbers) as 5.42923753189E11. Give back the digits (542923753189) when that is exact.
+    Excel keeps only 15 digits of a number, so a longer one cannot be rebuilt: it is returned unchanged."""
+    t = str(text).strip()
+    if not SCI.fullmatch(t):
+        return text
+    try:
+        d = Decimal(t)
+    except InvalidOperation:
+        return text
+    if d != d.to_integral_value() or abs(d) >= Decimal(10) ** 15:
+        return text
+    return str(int(d))
+
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -106,7 +125,7 @@ class Workbook:
                         except ValueError:
                             val = v.text
                     else:
-                        val = v.text[:-2] if v.text.endswith(".0") else v.text
+                        val = plain_number(v.text[:-2] if v.text.endswith(".0") else v.text)
                     cells[col_index(c.get("r"))] = val
                 row_no = int(el.get("r", 0)) or n + 1
                 el.clear()

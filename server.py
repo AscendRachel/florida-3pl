@@ -2,6 +2,8 @@
 
 Standard library only. Run `python server.py`, then open http://localhost:8765
 """
+import amazon
+import base64
 import clock
 import dashboard
 import csv, hashlib, io, json, getpass, os, re, sys, sqlite3, tempfile, threading, time, urllib.error, urllib.parse, urllib.request, uuid
@@ -14,7 +16,7 @@ import auth
 import locks
 import returns
 import scan
-from xlsx_reader import Workbook, col_index
+from xlsx_reader import Workbook, col_index, plain_number
 
 ROOT = Path(__file__).parent
 WEB = ROOT / "web"
@@ -25,12 +27,15 @@ returns.DB = DATA / "returns.db"
 auth.DB = DATA / "auth.db"
 locks.FILE = DATA / "locks.json"
 # only admins may do these: they change what everybody sees or how the data is loaded
-ADMIN_POST = {"/api/upload", "/api/upload-link", "/api/import", "/api/dropdown", "/api/returns/settings", "/api/dashboard/operators", "/api/returns/labels"}  # and everything under /api/columns/ and /api/team/
+ADMIN_POST = {"/api/upload", "/api/upload-link", "/api/import", "/api/dropdown", "/api/returns/settings", "/api/dashboard/operators", "/api/returns/labels", "/api/branding"}  # and everything under /api/columns/ and /api/team/
 # the checkbox that stamps a date and time when it is ticked -> the column that holds the stamp
 SHIP_STAMP = {"Shipped to Customer": "SHIPPED TO  CUSTOMER DATE", "Shipped to Amazon": "SHIPPED TO  AMAZON DATE",
               "ITEM ON HOLD": "Hold Date"}
 SHIP_OTHER = {"Shipped to Customer": "Shipped to Amazon", "Shipped to Amazon": "Shipped to Customer"}
 dashboard.FILE = DATA / "dashboard.json"
+BRANDING_FILE = DATA / "branding.json"  # the app's name, initials, colour and logo (an admin edits them in the Team tab)
+LOGO_FILE = DATA / "branding_logo.bin"
+DEFAULT_BRANDING = {"name": "Florida 3PL", "initials": "F3", "color": "#1f7a4d", "logo": "", "v": 0}
 RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the Returns columns {field: name}
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
@@ -85,12 +90,13 @@ DEFAULT_COLUMNS = [
     "SKU", "STOCK NO.", "TAPICKER STATUS", "TAPICKER SHIPPED DATE", "TAPICKER DELIVERY DATE", "Label Chip",
     "SHIPPED TO  CUSTOMER DATE", "SHIPPED TO  AMAZON DATE", "RTS COUNTER", "RTA COUNTER", "Item on Hold Counter",
     "Store Returns Counter", "All Orders Counter", "Stock Counter", "Updated by", "Delivered to Warehouse Date",
+    "Items Received",
 ]
 BOOLS = ["Package Not Received", "To Void", "ITEM ON HOLD", "Stock", "Label Used", "Shipped to Customer",
          "Shipped to Amazon", "Label Voided"]
 DATES = ["Source Order Date", "Delivery Date", "Hold Date", "TAPICKER SHIPPED DATE", "TAPICKER DELIVERY DATE",
          "SHIPPED TO  CUSTOMER DATE", "SHIPPED TO  AMAZON DATE", "Delivered to Warehouse Date"]
-NUMS = ["QTY", "Number of Orders", "Number of Items", "Boxes Received", "Boxes Expected", "RTS COUNTER",
+NUMS = ["QTY", "Items Received", "Number of Orders", "Number of Items", "Boxes Received", "Boxes Expected", "RTS COUNTER",
         "RTA COUNTER", "Item on Hold Counter", "Store Returns Counter", "All Orders Counter", "Stock Counter"]
 SELECTS = ["Source Order Status", "Tracking Status", "Store"]
 SEARCH = ["Label Number", "Store Order No.", "Product Name", "Brand", "Customer Name", "Address",
@@ -153,7 +159,7 @@ PROTECTED = {
         "Label Number", "Store Order No.", "Product Name", "Brand", "QTY", "Customer Name", "Source Order Number",
         "Source Tracking Number", "Shipping Label Link", "Product Image Link", "Package Not Received", "Label Used",
         "Shipped to Customer", "Shipped to Amazon", "Label Voided", "Boxes Received", "Boxes Expected", "Hold Date",
-        "Updated by", "SHIPPED TO  CUSTOMER DATE", "SHIPPED TO  AMAZON DATE", "Store", "Notes")}
+        "Updated by", "SHIPPED TO  CUSTOMER DATE", "SHIPPED TO  AMAZON DATE", "Store", "Notes", "Items Received")}
 PROTECTED.update({n: "A summary card on All Orders counts it" for n in ("Tracking Status", "ITEM ON HOLD", "To Void", "Stock")})
 CUSTOM_KINDS = ("text", "num", "date", "bool", "dropdown")
 # Calculated columns: the column on the left is always the columns on the right written one after the other (in the Google
@@ -314,6 +320,14 @@ def connect(path=None):
     return db
 
 
+def ensure_items_column():
+    """Orders made before the Scan tab counted items have no "Items Received" column: add it to the schema (the table follows)."""
+    if "Items Received" in IX or any(e.get("was") == "Items Received" for e in ENTRIES):
+        return
+    apply_schema([*ENTRIES, {"name": "Items Received", "kind": "num"}])
+    save_schema()
+
+
 def ensure_db():
     DATA.mkdir(exist_ok=True)
     UPLOADS.mkdir(exist_ok=True)
@@ -321,6 +335,7 @@ def ensure_db():
         f.unlink(missing_ok=True)
     if not DB.exists():
         init_db(DB)
+    ensure_items_column()
     sync_table_columns()
     db = sqlite3.connect(DB)
     recompute_formulas(db)
@@ -388,7 +403,7 @@ def parse_orders(path, sheet):
         vals = [""] * len(COLUMNS)
         for fc, oc in pos.items():
             if fc < len(r):
-                vals[oc] = fix_text(str(r[fc])).strip()
+                vals[oc] = plain_number(fix_text(str(r[fc])).strip())
         if not any(vals) or vals[0] == "Counters":
             skipped += 1
             continue
@@ -672,6 +687,50 @@ def flatten(params):
     return p
 
 
+def load_branding():
+    try:
+        return {**DEFAULT_BRANDING, **json.loads(BRANDING_FILE.read_text(encoding="utf-8"))}
+    except (OSError, ValueError):
+        return dict(DEFAULT_BRANDING)
+
+
+IMAGE_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF8", "image/gif"))
+
+
+def save_branding(b):
+    cur = load_branding()
+    name = " ".join(str(b.get("name", "")).split())[:40]
+    initials = "".join(str(b.get("initials", "")).split())[:3]
+    color = str(b.get("color", "")).strip().lower()
+    if not name:
+        raise ValueError("Give the app a name.")
+    if not re.fullmatch(r"#[0-9a-f]{6}", color):
+        raise ValueError("Pick a colour.")
+    new = {"name": name, "initials": initials or name[:2].upper(), "color": color, "logo": cur["logo"], "v": cur["v"]}
+    logo = b.get("logo")
+    if b.get("remove_logo"):
+        new["logo"] = ""
+        LOGO_FILE.unlink(missing_ok=True)
+        new["v"] += 1
+    elif logo:
+        try:
+            raw = base64.b64decode(str(logo).split(",", 1)[-1], validate=False)
+        except ValueError:
+            raise ValueError("That image could not be read.") from None
+        kind = next((t for sig, t in IMAGE_TYPES if raw.startswith(sig)), "image/webp" if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP" else "")
+        if not kind:
+            raise ValueError("Use a PNG, JPG, GIF or WebP image.")
+        if len(raw) > 1_500_000:
+            raise ValueError("The logo can be up to 1.5 MB.")
+        LOGO_FILE.write_bytes(raw)
+        new["logo"], new["v"] = kind, new["v"] + 1
+    tmp = BRANDING_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, BRANDING_FILE)
+    bump()
+    return new
+
+
 def load_return_labels():
     try:
         return json.loads(RETURN_LABELS_FILE.read_text(encoding="utf-8"))
@@ -765,6 +824,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.page("login.html")
         if u.path == "/api/build":
             return self.send_json({"build": build_id()})
+        if u.path == "/api/branding":  # public: the sign-in page shows it too
+            return self.send_json(load_branding())
+        if u.path == "/branding/logo":
+            b = load_branding()
+            try:
+                data = LOGO_FILE.read_bytes()
+            except OSError:
+                data = b""
+            if not b["logo"] or not data:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", b["logo"])
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if u.path == "/api/setup-needed":
             return self.send_json({"setup": auth.user_count() == 0, "allowed": self.is_local_direct()})
         if u.path.startswith("/static/"):
@@ -835,10 +913,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True}, headers={"Set-Cookie": auth.cookie_value("", self.https(), 0)})
         except ValueError as e:
             return self.send_json({"error": str(e)}, 400)
-        user = self.need_user(admin=path in ADMIN_POST or path.startswith("/api/team/") or path.startswith("/api/columns/") or (path.startswith("/api/rows/") and path != "/api/rows/add") or path.startswith("/api/locks/"))
+        user = self.need_user(admin=path in ADMIN_POST or path.startswith("/api/team/") or path.startswith("/api/columns/") or (path.startswith("/api/rows/") and path != "/api/rows/add") or path.startswith("/api/locks/") or path.startswith("/api/amazon/"))
         if not user:
             return
         try:
+            if path == "/api/amazon/preview":
+                return self.send_json(self.api_amazon_preview())
+            if path == "/api/amazon/apply":
+                return self.send_json(self.api_amazon_apply(json.loads(self.body() or b"{}")))
+            if path == "/api/branding":
+                return self.send_json(save_branding(json.loads(self.body() or b"{}")))
             if path == "/api/dashboard/operators":
                 return self.send_json({"operators": dashboard.save_operators(json.loads(self.body() or b"{}").get("operators"))})
             if path == "/api/me/password":
@@ -861,7 +945,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(self.api_values(json.loads(self.body() or b"{}")))
             if path.startswith("/api/returns/"):
                 return self.send_json(self.api_returns_post(path, json.loads(self.body() or b"{}")))
-            if path in ("/api/scan", "/api/scan/confirm", "/api/scan/release", "/api/scan/pnr"):
+            if path in ("/api/scan", "/api/scan/confirm", "/api/scan/release", "/api/scan/pnr", "/api/scan/count"):
                 return self.send_json(self.api_scan(path, json.loads(self.body() or b"{}")))
             if path == "/api/dropdown":
                 return self.send_json(self.api_dropdown(json.loads(self.body() or b"{}")))
@@ -961,7 +1045,7 @@ class Handler(BaseHTTPRequestHandler):
         day = str((p.get("date") or [""])[0] or clock.now().strftime("%Y-%m-%d"))
         col = {name: f"c{IX[name]}" for name in ("Delivery Date", "Source Order Status", "Shipped to Customer", "Package Not Received",
                                                  "Tracking Status", "Hold Date", "SHIPPED TO  CUSTOMER DATE", "SHIPPED TO  AMAZON DATE",
-                                                 "Delivered to Warehouse Date", "Updated by")}
+                                                 "Delivered to Warehouse Date", "Updated by", "Shipped to Amazon", "Stock", "ITEM ON HOLD", "Store Order No.")}
         with lock:
             db = connect()
             try:
@@ -1145,6 +1229,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if path == "/api/scan":
                     out = scan.scan(db, IX, str(b.get("code", "")), operator, dry)
+                elif path == "/api/scan/count":
+                    out = scan.count_items(db, IX, int(b["rn"]), str(b.get("code", "")), int(b.get("items", -1)), operator, dry)
                 elif path == "/api/scan/release":
                     out = scan.release(db, IX, int(b["rn"]), operator, dry)
                 elif path == "/api/scan/pnr":
@@ -1238,6 +1324,64 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 db.close()
         return {"events": [dict(r) for r in rows]}
+
+    def api_amazon_preview(self):
+        """Read the Amazon orders file (raw request body) and show what importing it would change. Nothing is written yet."""
+        data = self.body()
+        if not data:
+            raise ValueError("The file is empty.")
+        lines = amazon.read_lines(data)
+        if not lines:
+            raise ValueError("The file has no orders in it.")
+        names = ("Source Order Number", "Source Tracking Number", "Source Order Status", "Product Name", "Store Order No.", "Label Number", "QTY", "Items Received")
+        with lock:
+            db = connect()
+            try:
+                q = f"SELECT rn, {', '.join(f'c{IX[n]}' for n in names)} FROM orders"
+                rows = [{"rn": r[0], "order": (r[1] or "").strip(), "tracking": r[2] or "", "status": (r[3] or "").strip(), "title": r[4] or "",
+                         "store": (r[5] or "").strip(), "label": r[6] or "", "qty": r[7] or "", "items": r[8] or ""} for r in db.execute(q)]
+            finally:
+                db.close()
+        plan = amazon.build_plan(rows, lines)
+        token = amazon.keep(plan)
+        shown = [{"rn": rn, **c} for rn, c in list(plan["changes"].items())[:300]]
+        return {**{k: v for k, v in plan.items() if k != "changes"}, "unmatched_orders": plan["unmatched_orders"][:100],
+                "unmatched_total": len(plan["unmatched_orders"]), "shown": shown, "changed_total": len(plan["changes"]), "token": token,
+                "file": urllib.parse.unquote(self.headers.get("X-Filename", "file"))}
+
+    def api_amazon_apply(self, b):
+        entry = amazon.PLANS.get(str(b.get("token", "")))
+        if not entry:
+            raise ValueError("That preview has expired. Choose the file again.")
+        plan = entry[1]
+        with lock:
+            db = connect()
+            try:
+                orders = scan.Orders(db, IX, self.user["name"])
+                skipped = 0
+                for rn, c in plan["changes"].items():
+                    # a last check against the live data: a finished row is never rewritten, even by an older preview
+                    now_status = (db.execute(f"SELECT c{IX['Source Order Status']} FROM orders WHERE rn = ?", (int(rn),)).fetchone() or [""])[0] or ""
+                    if now_status.strip().lower() in amazon.DONE:
+                        skipped += 1
+                        continue
+                    orders.set(int(rn), c["changes"], note="Amazon import")
+                    cleaned = scan.delivered_cleanup(orders, int(rn), "Amazon import: row is Delivered") if c["changes"].get("Source Order Status") == "Delivered" else {}
+                    if cleaned:
+                        r = db.execute(f"SELECT {', '.join(f'c{j}' for j in SEARCH_IDX)} FROM orders WHERE rn = ?", (int(rn),)).fetchone()
+                        db.execute("UPDATE orders SET _s = ? WHERE rn = ?", (" ".join(x or "" for x in r).lower(), int(rn)))
+                    if any(IX[k] in SEARCH_IDX for k in c["changes"]):
+                        r = db.execute(f"SELECT {', '.join(f'c{j}' for j in SEARCH_IDX)} FROM orders WHERE rn = ?", (int(rn),)).fetchone()
+                        db.execute("UPDATE orders SET _s = ? WHERE rn = ?", (" ".join(x or "" for x in r).lower(), int(rn)))
+                db.commit()
+                bump()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        amazon.PLANS.pop(str(b.get("token")), None)
+        return {"ok": True, "rows": len(plan["changes"]) - skipped, "tracking_added": plan["tracking_added"], "status_changed": plan["status_changed"]}
 
     def api_ship_events(self, params):
         rn = int(params.get("rn", ["0"])[0])
@@ -1533,7 +1677,7 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             db = connect()
             now = clock.now().isoformat(timespec="seconds")
-            values, touched, also, shipped_ticks = [], set(), [], set()
+            values, touched, also, shipped_ticks, delivered = [], set(), [], set(), set()
             try:
                 for it in items:
                     rn, j = int(it["rn"]), int(it["col"])
@@ -1564,6 +1708,8 @@ class Handler(BaseHTTPRequestHandler):
                     values.append(v)
                     # ticking Shipped to Customer / Shipped to Amazon stamps the date and time of the tick (clearing it clears the stamp)
                     stamp_col = SHIP_STAMP.get(COLUMNS[j]) and IX.get(SHIP_STAMP[COLUMNS[j]])
+                    if COLUMNS[j] == "Source Order Status" and v == "Delivered" and (before[0] or "") != v:
+                        delivered.add(rn)
                     if v == "TRUE" and (before[0] or "") != v and COLUMNS[j] in ("Shipped to Customer", "Shipped to Amazon"):
                         shipped_ticks.add((rn, j))
                     if stamp_col is not None and v in ("TRUE", "FALSE") and (before[0] or "") != v:
@@ -1588,6 +1734,12 @@ class Handler(BaseHTTPRequestHandler):
                             also.append({"rn": rn, "col": oj, "value": "FALSE"})
                     if j in SEARCH_IDX:
                         touched.add(rn)
+                if delivered:  # Delivered: no longer on hold, and the partial-delivery note goes
+                    orders = scan.Orders(db, IX, self.user["name"])
+                    for rn in delivered:
+                        for name, val in scan.delivered_cleanup(orders, rn, "Row became Delivered").items():
+                            also.append({"rn": rn, "col": IX[name], "value": val})
+                            touched.add(rn)
                 recalc = {int(it["rn"]) for it in items if int(it["col"]) in formula_sources()}
                 if recalc:
                     recompute_formulas(db, recalc)

@@ -1,4 +1,5 @@
 // App shell: who is signed in, navigation, and the view router. Add the next tabs to VIEWS.
+import { loadBranding } from "./branding.js";
 import { $, api, dialog, esc, store, toast, tzEastern } from "./util.js";
 
 const VIEWS = {
@@ -6,6 +7,7 @@ const VIEWS = {
   scan: { label: "Scan", mod: "./v-scan.js" },
   orders: { label: "All Orders", mod: "./v-orders.js" },
   returns: { label: "Returns", mod: "./v-returns.js" },
+  amazon: { label: "Amazon Orders", mod: "./v-amazon.js", admin: true },
   import: { label: "Import", mod: "./v-import.js", admin: true },
   team: { label: "Team", mod: "./v-team.js", admin: true },
 };
@@ -103,6 +105,7 @@ async function show() {
 window.addEventListener("hashchange", show);
 (async () => {
   try {
+    await loadBranding();
     ctx.me = await api("/api/me");
     tzEastern.off = ctx.me.tz_offset_min ?? 300;
   } catch (err) {

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · Greentek Orders</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f7a4d'/%3E%3Ctext x='16' y='21' font-size='14' font-weight='700' text-anchor='middle' fill='white' font-family='sans-serif'%3EGT%3C/text%3E%3C/svg%3E">
+<title>Sign in · Florida 3PL</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f7a4d'/%3E%3Ctext x='16' y='21' font-size='14' font-weight='700' text-anchor='middle' fill='white' font-family='sans-serif'%3EF3%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
 <script>try{var t=localStorage.getItem("gt_theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
@@ -16,7 +16,7 @@
 </head>
 <body>
 <div class="box card">
-  <div class="brand"><div class="logo">GT</div><h1 id="title">Greentek Orders</h1></div>
+  <div class="brand"><div class="logo">F3</div><h1 id="title">Florida 3PL</h1></div>
   <p class="muted" id="sub">Sign in with your own login.</p>
   <div id="msg"></div>
   <form id="form">
@@ -41,7 +41,7 @@ async function post(path, body) {
     const s = await (await fetch("/api/setup-needed")).json();
     if (s.setup) {
       if (!s.allowed) { show("The app isn't set up yet. Open it on the server PC to create the first admin.", "bad"); $("form").hidden = true; return; }
-      setup = true;
+      setup = true; document.body.dataset.setup = "1";
       $("title").textContent = "Create the admin account";
       $("sub").textContent = "This is the first start. Pick a name, username and password for yourself. You can add the rest of the team afterwards.";
       $("nameRow").hidden = false; $("go").textContent = "Create account"; $("pw").autocomplete = "new-password";
@@ -57,5 +57,8 @@ $("form").addEventListener("submit", async (e) => {
   } catch (err) { show(err.message, "bad"); $("go").disabled = false; }
 });
 </script>
+<script type="module">import { loadBranding } from "/static/js/branding.js"; import { brand } from "/static/js/util.js";
+await loadBranding("Sign in · ");
+if (!document.body.dataset.setup) document.getElementById("title").textContent = brand.name;</script>
 </body>
 </html>

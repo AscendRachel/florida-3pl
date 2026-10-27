@@ -1,6 +1,6 @@
 // All Orders: the "March" tab as an editable spreadsheet grid (server-side search, filter and sort).
 // Click a cell to select it, type or press Enter / F2 / double-click to edit, arrows / Tab to move, Ctrl+C / V / X / Z work.
-import { $, ago, api, confirmBox, debounce, dialog, esc, fmt, store, toast } from "./util.js";
+import { $, ago, api, brand, confirmBox, debounce, dialog, esc, fmt, store, toast } from "./util.js";
 import { nextSeries } from "./fill.js";
 import { lockReason, lockTip, protectDialog, renameDialog } from "./protect.js";
 
@@ -61,7 +61,7 @@ export async function mount(el, params, ctx) {
   const width = (c) => widths[c.name] || (c.kind === "bool" ? 100 : c.kind === "date" ? 130 : c.kind === "num" ? 90 : WIDTHS[c.name] || 150);
 
   el.innerHTML = `<div class="sheetpage">
-    <div class="section-head"><div><div class="eyebrow">Greentek</div><h2>All Orders</h2></div>
+    <div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>All Orders</h2></div>
       <div class="btnrow"><span class="muted" id="synced"></span></div></div>
     <div class="qgrid cards" id="cards"></div>
     <div class="toolbar sheetbar">

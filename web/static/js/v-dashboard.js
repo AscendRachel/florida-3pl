@@ -1,5 +1,5 @@
 // Dashboard: the day's numbers (the sheet's Dashboard tab). Times are US Eastern, the warehouse's clock.
-import { $, api, dialog, esc, fmt, toast, tzEastern } from "./util.js";
+import { $, api, brand, dialog, esc, fmt, toast, tzEastern } from "./util.js";
 
 const hourLabel = (h) => {
   const f = (x) => `${x % 12 || 12}:00 ${x < 12 ? "AM" : "PM"}`;
@@ -30,7 +30,7 @@ export async function mount(el, params, ctx) {
 
   function draw() {
     const isToday = data.date === data.today;
-    el.innerHTML = `<div class="section-head"><div><div class="eyebrow">Greentek</div><h2>Dashboard</h2>
+    el.innerHTML = `<div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>Dashboard</h2>
         <p>The day's numbers in US Eastern time${isToday ? ` — it is ${esc(data.now.slice(11))} there now` : ""}. Updates live.</p></div>
         <div class="btnrow dash-date"><button class="btn" id="prev" title="Day before">‹</button>
           <label class="field" style="margin:0"><span>Select date</span><input type="date" id="day" value="${esc(data.date)}"></label>
@@ -39,6 +39,8 @@ export async function mount(el, params, ctx) {
           ${ctx.isAdmin() ? '<button class="btn" id="ops">Operators</button>' : ""}</div></div>
       <div class="dash-cards">${data.cards.map((c) => `<div class="scard ${TONE[c.key] || ""} dash-card"><div class="dash-n">${fmt(c.n)}</div>
         <div class="dash-l">${esc(c.label)}${c.note ? `<div class="muted">${esc(c.note)}</div>` : ""}</div></div>`).join("")}</div>
+      <div class="dash-cards dash-counters">${data.counters.map((c) => `<div class="scard neutral dash-card" title="${esc(c.note)}"><div class="dash-n">${fmt(c.n)}</div>
+        <div class="dash-l">${esc(c.label)}<div class="muted">${esc(c.note)}</div></div></div>`).join("")}</div>
       <div class="dash-tables">
         ${table("All Orders", data.orders, data.operators, data.orders_total, "Shipped to customer, by the hour")}
         ${table("Store Returns", data.returns, data.operators, data.returns_total, "Shipped to Amazon, by the hour")}
@@ -94,7 +96,7 @@ export async function mount(el, params, ctx) {
   let knownV = (await api("/api/version")).v;
   clearInterval(window.__dashTimer);
   window.__dashTimer = setInterval(async () => {
-    if (!el.isConnected || !$("#day")) return clearInterval(window.__dashTimer);
+    if (location.hash.split("?")[0] !== "#dashboard" || !$("#day")) return clearInterval(window.__dashTimer);
     if (document.hidden) return;
     try {
       const { v } = await api("/api/version");
@@ -106,5 +108,12 @@ export async function mount(el, params, ctx) {
       }
     } catch { /* offline for a moment */ }
   }, 2000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && el.isConnected) load().catch(() => {}); });
+  // coming back to this browser tab: refresh, but only while the Dashboard is still the page on screen
+  const onVisible = () => {
+    if (location.hash.split("?")[0] !== "#dashboard" || !$("#day")) return document.removeEventListener("visibilitychange", onVisible);
+    if (!document.hidden) load().catch(() => {});
+  };
+  document.removeEventListener("visibilitychange", window.__dashVisible);
+  window.__dashVisible = onVisible;
+  document.addEventListener("visibilitychange", onVisible);
 }
