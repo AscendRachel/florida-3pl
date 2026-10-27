@@ -1,0 +1,10 @@
+data/
+__pycache__/
+*.pyc
+server.log
+*.tmp
+.git/
+.gitignore
+*.bat
+README.md
+DOCKER.md
