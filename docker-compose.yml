@@ -4,6 +4,6 @@ services:
     container_name: florida-3pl
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8765:8765"
     volumes:
       - ./data:/app/data   # orders, returns, logins, uploads: keep this folder and back it up

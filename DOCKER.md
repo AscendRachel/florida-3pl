@@ -4,15 +4,11 @@
 Every push to `main` on GitHub builds the image and publishes it to Docker Hub as `ascendrachel/florida-3pl:latest`
 (see `.github/workflows/docker.yml`; it needs the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` in the GitHub repo).
 
-## Port
-Inside the container the app listens on **8080** (set by `PORT` in the Dockerfile). To publish it on another port of the server,
-change the left number in `docker-compose.yml`, for example `"9000:8080"`.
-
 ## Start it
 ```
 docker compose up -d
 ```
-Open http://localhost:8080 (or http://SERVER-IP:8080 from another PC).
+Open http://localhost:8765 (or http://SERVER-IP:8765 from another PC).
 
 ## Create the first admin (once)
 The sign-in page only lets you create the first account from the server PC itself, which a container cannot do, so make it from the command line:
@@ -42,7 +38,7 @@ docker compose down           # stop (the data stays)
 ```
 
 ## Using it from the internet with a domain (no port number) - Caddy
-Caddy gives the app HTTPS and a normal address like https://orders.yourcompany.com. Do not open port 8080 to the internet.
+Caddy gives the app HTTPS and a normal address like https://orders.yourcompany.com. Do not open port 8765 to the internet.
 
 1. In your DNS, add an **A record** for the name you want (for example `orders`) that points to the server's IP.
 2. On the server, copy `.env.example` to `.env` and set `DOMAIN=orders.yourcompany.com`.
@@ -60,7 +56,7 @@ If the server **already runs its own Caddy**, do not start a second one. Add thi
 containers share a Docker network (use the app container name `florida-3pl`):
 ```
 orders.yourcompany.com {
-	reverse_proxy florida-3pl:8080
+	reverse_proxy florida-3pl:8765
 }
 ```
 Caddy sends `X-Forwarded-Proto: https` by itself, which is what the app needs to mark sign-in cookies as Secure.
