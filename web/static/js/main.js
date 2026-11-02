@@ -65,10 +65,10 @@ document.addEventListener("click", async (e) => {
 let loadedBuild = null, newVersion = false;
 async function checkBuild() {
   try {
-    const { build } = await (await fetch("/api/build", { cache: "no-store" })).json();
+    const { build, version } = await (await fetch("/api/build", { cache: "no-store" })).json();
     if (loadedBuild === null) {
       loadedBuild = build;
-      document.body.insertAdjacentHTML("beforeend", `<div class="build-tag" title="The version of the app this page is running">version ${build.slice(0, 6)}</div>`);
+      document.body.insertAdjacentHTML("beforeend", `<div class="build-tag" title="The version of the app this page is running (build ${build.slice(0, 6)})">version ${version}</div>`);
     }
     else if (build !== loadedBuild && !newVersion) {
       newVersion = true;

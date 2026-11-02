@@ -12,6 +12,7 @@
   .box { width: min(400px, 100%); }
   .box .brand { margin-bottom: 18px; }
   form { display: grid; gap: 12px; }
+  .ver { margin: 16px 0 0; text-align: center; font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -25,6 +26,7 @@
     <label class="field"><span id="pwLabel">Password</span><input id="pw" type="password" autocomplete="current-password" required></label>
     <button class="btn primary" id="go" style="justify-content:center">Sign in</button>
   </form>
+  <p class="ver" id="ver" hidden></p>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -36,6 +38,7 @@ async function post(path, body) {
   if (!r.ok) throw new Error(j.error || "Something went wrong.");
   return j;
 }
+fetch("/api/build", { cache: "no-store" }).then((r) => r.json()).then(({ version }) => { $("ver").textContent = "Version " + version; $("ver").hidden = false; }).catch(() => {});
 (async () => {
   try {
     const s = await (await fetch("/api/setup-needed")).json();

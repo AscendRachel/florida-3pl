@@ -218,3 +218,14 @@ main:has(.dash-cards) .section-head { margin-bottom: 10px; }
 /* Scan: count the items in a package */
 .sc-count { display: flex; gap: 10px; align-items: flex-end; margin: 8px 0 4px; flex-wrap: wrap; }
 .sc-count input { width: 120px; font-size: 20px; font-weight: 700; }
+
+/* conditional formatting (the Google Sheet's colours): --cf-bg / --cf-fg are set per cell */
+.gc.cf { background: var(--cf-bg); color: var(--cf-fg); }
+.gc.cf.s:not(.a) { background: color-mix(in srgb, var(--cf-bg) 70%, var(--brand)); }
+.gc.cf .pill { background: rgba(255,255,255,.55); color: #111; }
+.gc.cf a, .gc.cf a:visited { color: inherit; text-decoration: underline; }
+
+/* duplicate cells: black with white text in the light theme, white with black text in the dark theme */
+:root { --dup-bg: #000000; --dup-fg: #ffffff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --dup-bg: #ffffff; --dup-fg: #000000; } }
+:root[data-theme="dark"] { --dup-bg: #ffffff; --dup-fg: #000000; }

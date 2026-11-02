@@ -39,6 +39,8 @@ DEFAULT_BRANDING = {"name": "Florida 3PL", "initials": "F3", "color": "#1f7a4d",
 RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the Returns columns {field: name}
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
+# The version people see (sign-in page and the tag in the app). Raise it when a new version is pushed: 1.0.1 -> 1.0.2 for a fix, 1.1.0 for a new feature.
+APP_VERSION = "1.1.0"
 PORT = int(os.environ.get("PORT", "8765"))
 MAX_UPLOAD = 300 * 1024 * 1024
 
@@ -823,7 +825,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/login":
             return self.page("login.html")
         if u.path == "/api/build":
-            return self.send_json({"build": build_id()})
+            return self.send_json({"build": build_id(), "version": APP_VERSION})
         if u.path == "/api/branding":  # public: the sign-in page shows it too
             return self.send_json(load_branding())
         if u.path == "/branding/logo":
@@ -861,6 +863,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"views": load_views()})
             if u.path == "/api/ship-events":
                 return self.send_json(self.api_ship_events(params))
+            if u.path == "/api/duplicates":
+                return self.send_json(self.api_duplicates())
             if u.path == "/api/history":
                 return self.send_json(self.api_history(params))
             if u.path == "/api/trash":
@@ -1382,6 +1386,19 @@ class Handler(BaseHTTPRequestHandler):
                 db.close()
         amazon.PLANS.pop(str(b.get("token")), None)
         return {"ok": True, "rows": len(plan["changes"]) - skipped, "tracking_added": plan["tracking_added"], "status_changed": plan["status_changed"]}
+
+    def api_duplicates(self):
+        """For the duplicate highlighting of All Orders (the sheet's =countif(C:C,C2)>1): the values that occur more than once."""
+        out = {}
+        with lock:
+            db = connect()
+            try:
+                for name in ("Store Order No.", "Source Order Number", "Shipping Label Link", "Tracking Number To Customer"):
+                    c = f"c{IX[name]}"
+                    out[name] = [r[0] for r in db.execute(f"SELECT lower(trim({c})) v FROM orders WHERE trim({c}) != '' GROUP BY v HAVING COUNT(*) > 1")]
+            finally:
+                db.close()
+        return {"values": out}
 
     def api_ship_events(self, params):
         rn = int(params.get("rn", ["0"])[0])

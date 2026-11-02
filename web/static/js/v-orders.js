@@ -2,6 +2,7 @@
 // Click a cell to select it, type or press Enter / F2 / double-click to edit, arrows / Tab to move, Ctrl+C / V / X / Z work.
 import { $, ago, api, brand, confirmBox, debounce, dialog, esc, fmt, store, toast } from "./util.js";
 import { nextSeries } from "./fill.js";
+import { DUP_COLUMNS, makeFormatter } from "./cond-format.js";
 import { lockReason, lockTip, protectDialog, renameDialog } from "./protect.js";
 
 const ROW_H = 30, HEAD_H = 30, FILT_H = 0, RN_W = 52, PAGE = 100;
@@ -142,9 +143,22 @@ export async function mount(el, params, ctx) {
     return { r1: Math.min(a.r, b.r), r2: Math.max(a.r, b.r), k1: wide ? 0 : Math.min(a.k, b.k), k2: wide ? list.length - 1 : Math.max(a.k, b.k) };
   };
 
-  function cell(c, v, i, r, rn, sel) {
-    const style = `width:${width(c)}px;${i === 0 ? `left:${RN_W}px` : ""}`;
-    let h = "", cls = i === 0 ? " pin" : "";
+  // conditional formatting: the colours of the Google Sheet's rules, worked out per row
+  const dupes = {};
+  const keyIdx = Object.fromEntries(cols.map((c) => [c.key, c.i]));
+  const formatRow = makeFormatter(keyIdx, dupes);
+  async function loadDupes() {
+    try {
+      const { values } = await api("/api/duplicates");
+      for (const [name, list] of Object.entries(values)) dupes[name] = new Set(list);
+      paint();
+    } catch { /* the colours for duplicates appear at the next refresh */ }
+  }
+  const loadDupesSoon = debounce(loadDupes, 700);
+
+  function cell(c, v, i, r, rn, sel, cf) {
+    const style = `width:${width(c)}px;${i === 0 ? `left:${RN_W}px` : ""}${cf ? `;--cf-bg:${cf.bg};--cf-fg:${cf.fg}` : ""}`;
+    let h = "", cls = (i === 0 ? " pin" : "") + (cf ? " cf" : "");
     if (!v) h = "";
     else if (c.kind === "bool") h = `<input type="checkbox" class="cbx" ${v === "TRUE" ? "checked" : ""} tabindex="-1">`, cls += " ctr";
     else if (c.kind === "num") cls += " r", h = esc(v);
@@ -169,8 +183,9 @@ export async function mount(el, params, ctx) {
     let out = "";
     for (let i = first; i <= last; i++) {
       const r = rowAt(i);
+      const cfs = r ? formatRow(r) : {};
       const inRow = sel && i >= sel.r1 && i <= sel.r2;
-      out += `<div class="gr${r ? "" : " loading"}" data-r="${i}" style="top:${i * ROW_H}px;width:${geo.total}px"><div class="gc rn${inRow ? " s" : ""}${r && rowLocks.has(r[0]) ? " lk" : ""}" style="width:${RN_W}px"${r && rowLocks.has(r[0]) ? ` title="${esc(lockTip(lockDefs[rowLocks.get(r[0])]))}"` : ""}>${r ? r[0] : ""}</div>${list.map((c, k) => cell(c, r ? r[c.i + 1] : "", k, i, r?.[0], inRow && k >= sel.k1 && k <= sel.k2)).join("")}</div>`;
+      out += `<div class="gr${r ? "" : " loading"}" data-r="${i}" style="top:${i * ROW_H}px;width:${geo.total}px"><div class="gc rn${inRow ? " s" : ""}${r && rowLocks.has(r[0]) ? " lk" : ""}" style="width:${RN_W}px"${r && rowLocks.has(r[0]) ? ` title="${esc(lockTip(lockDefs[rowLocks.get(r[0])]))}"` : ""}>${r ? r[0] : ""}</div>${list.map((c, k) => cell(c, r ? r[c.i + 1] : "", k, i, r?.[0], inRow && k >= sel.k1 && k <= sel.k2, cfs[c.key])).join("")}</div>`;
     }
     rowsEl.innerHTML = out;
     if (last >= first) for (let p = Math.floor(first / PAGE); p <= Math.floor(last / PAGE); p++) loadPage(p);
@@ -235,6 +250,7 @@ export async function mount(el, params, ctx) {
       items.forEach((it, n) => { patchCache(it.rn, it.col, values[n], it.r); });
       (out.also || []).forEach((a) => patchCache(a.rn, a.col, a.value));
       new Set(items.map((it) => it.r)).forEach(recalc);
+      if (items.some((it) => DUP_COLUMNS.includes(cols.find((c) => c.i === it.col)?.key))) loadDupesSoon();
       const refused = items.map((it, n) => values[n] !== it.value && values[n] === olds[n].value);
       if (record && olds.some((_, n) => !refused[n])) { undo.push(olds.filter((_, n) => !refused[n])); if (undo.length > 50) undo.shift(); }
       if (out.skipped) toast(`${out.reason}${out.skipped < items.length ? ` (${fmt(out.skipped)} protected cell${out.skipped === 1 ? "" : "s"} skipped, the rest were saved.)` : ""}`, "bad");
@@ -846,6 +862,7 @@ export async function mount(el, params, ctx) {
       }
       body.style.height = st.total * ROW_H + "px";
       $("#count").textContent = $("#sbL").textContent = countText();
+      loadDupesSoon();
       refreshCards();
       paint(); updateBar();
     } catch { /* try again at the next change */ }
@@ -1336,4 +1353,5 @@ export async function mount(el, params, ctx) {
   const v0 = activeView();
   if (v0) { st.q = v0.q; st.card = v0.card; st.cf = JSON.parse(JSON.stringify(known(v0.cf))); st.sort = v0.sort; st.dir = v0.dir; $("#q").value = v0.q; }
   renderCards(); drawHead(); fit(); reset();
+  loadDupes();
 }
