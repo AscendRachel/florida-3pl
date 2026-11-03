@@ -229,3 +229,41 @@ main:has(.dash-cards) .section-head { margin-bottom: 10px; }
 :root { --dup-bg: #000000; --dup-fg: #ffffff; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --dup-bg: #ffffff; --dup-fg: #000000; } }
 :root[data-theme="dark"] { --dup-bg: #ffffff; --dup-fg: #000000; }
+
+/* Order Cards */
+main:has(.cardgrid) { max-width: 2200px; padding-left: clamp(16px, 2.5vw, 48px); padding-right: clamp(16px, 2.5vw, 48px); }
+.cardbar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.cardfilters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cardfilter { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px 0 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.cardfilter:hover { border-color: var(--muted); }
+.cardfilter svg { flex: none; color: var(--muted); }
+.cardfilter.on { border-color: var(--brand); background: var(--brand-soft); }
+.cardfilter.on svg { color: var(--brand); }
+.cfcount { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--brand); color: var(--brand-ink); font-size: 12px; font-weight: 700; }
+.cardclear { height: 38px; padding: 0 10px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.cardclear:hover { color: var(--ink); }
+.cardsearch { width: min(300px, 100%); height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; }
+.cardsearch:focus, .cardfilter:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.cardmenu { padding: 6px; }
+.cardmenu .check input { flex: none; }
+.cardopt { display: flex; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.cardopt:hover { background: var(--soft); }
+.cardopt span:nth-of-type(1) { flex: 1; }
+.cardgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; align-items: stretch; }
+.ocard { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+.oc-img { height: 150px; background: #fff; display: grid; place-items: center; overflow: hidden; }
+.oc-img img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
+.oc-img.none { background: var(--soft); height: 14px; }
+.oc-body { padding: 12px 14px; flex: 1; font-size: 13.5px; }
+.oc-head { font-weight: 700; font-size: 15px; line-height: 1.35; margin-bottom: 10px; word-break: break-word; }
+.oc-body hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+.cf { margin: 0 0 8px; }
+.cl { display: block; color: var(--muted); font-size: 12.5px; margin-bottom: 1px; }
+.cv small { font-size: 12px; word-break: break-word; }
+.cv { word-break: break-word; }
+.flag { font-weight: 700; color: var(--muted); }
+.flag.yes { color: var(--ok); }
+.oc-actions { display: flex; gap: 8px; padding: 0 14px 14px; }
+.oc-actions .btn { flex: 1; justify-content: center; }
+.cardmore { text-align: center; margin: 18px 0 30px; }
+.checkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin: 10px 0; }

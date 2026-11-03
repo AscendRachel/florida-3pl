@@ -5,6 +5,7 @@ import { $, api, dialog, esc, store, toast, tzEastern } from "./util.js";
 const VIEWS = {
   dashboard: { label: "Dashboard", mod: "./v-dashboard.js" },
   scan: { label: "Scan", mod: "./v-scan.js" },
+  cards: { label: "Order Cards", mod: "./v-cards.js" },
   orders: { label: "All Orders", mod: "./v-orders.js" },
   returns: { label: "Returns", mod: "./v-returns.js" },
   amazon: { label: "Amazon Orders", mod: "./v-amazon.js", admin: true },

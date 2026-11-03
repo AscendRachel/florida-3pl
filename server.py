@@ -40,7 +40,7 @@ RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the 
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
 # The version people see (sign-in page and the tag in the app). Raise it when a new version is pushed: 1.0.1 -> 1.0.2 for a fix, 1.1.0 for a new feature.
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 PORT = int(os.environ.get("PORT", "8765"))
 MAX_UPLOAD = 300 * 1024 * 1024
 
@@ -1084,7 +1084,7 @@ class Handler(BaseHTTPRequestHandler):
             where, args = build_where(p)
             total = db.execute(f"SELECT COUNT(*) FROM orders{where}", args).fetchone()[0]
             sort = str(p.get("sort", ""))
-            order = "rn"
+            order = "rn DESC" if sort == "rn" and p.get("dir") == "desc" else "rn"  # "rn": the order of entry (newest first for the cards)
             if sort.isdigit() and int(sort) < len(COLUMNS):
                 j = int(sort)
                 d = "DESC" if p.get("dir") == "desc" else "ASC"
