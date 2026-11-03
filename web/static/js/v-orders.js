@@ -128,7 +128,7 @@ export async function mount(el, params, ctx) {
     geo = { total: x };
     inner.style.width = x + "px";
     $("#hrow").innerHTML = `<div class="hc rn" style="width:${RN_W}px;height:${HEAD_H}px">#</div>` + list.map((c, i) => {
-      const f = st.cf[c.i], on = !!(f && (f.c || f.v)), sorted = st.sort === String(c.i);
+      const f = st.cf[c.i], on = !!(f && (f.c || f.v || f.k)), sorted = st.sort === String(c.i) || st.sort.startsWith(`color:${c.i}:`);
       return `<div class="hc${i === 0 ? " pin" : ""}${on ? " filtered" : ""}" style="width:${width(c)}px;height:${HEAD_H}px;${i === 0 ? `left:${lefts[0]}px` : ""}">
         <span class="hl" title="${esc(colLocks[c.i] ? `${c.name}. ${lockTip(lockDefs[colLocks[c.i]])}` : c.formula ? `${c.name} is calculated: ${c.formula}` : c.name)}">${colLocks[c.i] ? "🔒 " : ""}${c.formula ? "ƒ " : ""}${esc(c.name)}</span>${sorted ? `<span class="hs">${st.dir === "asc" ? "▲" : "▼"}</span>` : ""}
         <button class="fb${on ? " on" : ""}" data-fb="${c.i}" title="Sort and filter" aria-label="Sort and filter ${esc(c.name)}"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M1.5 2.5h13l-5 6v5l-3-1.8V8.5z" fill="currentColor"/></svg></button><i class="rz" data-rz="${c.i}"></i></div>`;
@@ -701,7 +701,7 @@ export async function mount(el, params, ctx) {
   }
 
   // ---- column filters, like Sheets: the funnel in each header opens sort + "Filter by condition" + "Filter by values"
-  const nFilters = () => Object.values(st.cf).filter((f) => f.c || f.v).length;
+  const nFilters = () => Object.values(st.cf).filter((f) => f.c || f.v || f.k).length;
   const COND = {
     text: [["contains", "Text contains"], ["notcontains", "Text does not contain"], ["eq", "Text is exactly"], ["starts", "Text starts with"], ["ends", "Text ends with"], ["empty", "Is empty"], ["notempty", "Is not empty"]],
     num: [["eq", "Equal to"], ["neq", "Not equal to"], ["gt", "Greater than"], ["gte", "Greater than or equal to"], ["lt", "Less than"], ["lte", "Less than or equal to"], ["between", "Is between"], ["empty", "Is empty"], ["notempty", "Is not empty"]],
@@ -717,28 +717,36 @@ export async function mount(el, params, ctx) {
     fm = null;
   }
 
+  // colours of the conditional formatting, as a swatch with its name
+  const swatch = (hex) => `<i class="sw${hex === "dup" ? " dup" : ""}"${hex && hex !== "dup" ? ` style="background:${hex}"` : ""}></i>`;
+
   async function openFilterMenu(c, anchor) {
     closeFilterMenu();
     closeDropdown();
     const cur = st.cf[c.i] || {};
     // the values are kept as "everything except these" (out) or "only these" (in), so a long list never has to be sent
-    const draft = { c: cur.c ? { ...cur.c } : null, mode: cur.v ? cur.v.mode : "out", set: new Set(cur.v ? cur.v.list : []) };
+    const draft = { c: cur.c ? { ...cur.c } : null, mode: cur.v ? cur.v.mode : "out", set: new Set(cur.v ? cur.v.list : []), colors: new Set(cur.k ? cur.k.list : []) };
     const condKind = c.kind === "num" ? "num" : c.kind === "date" ? "date" : "text";
     const inputType = condKind === "date" ? "date" : "text";
-    const sorted = st.sort === String(c.i);
+    const sorted = st.sort === String(c.i) || st.sort.startsWith(`color:${c.i}:`);
     const menu = document.createElement("div");
     menu.className = "fmenu";
+    const acc = (id, text, open) => `<button type="button" class="fm-acc" data-acc="${id}" aria-expanded="${open ? "true" : "false"}"><span class="fm-arrow">${open ? "▾" : "▸"}</span> ${text}</button>`;
     menu.innerHTML = `<div class="fm-title">${esc(c.name)}</div>
-      <button type="button" class="fm-item${sorted && st.dir === "asc" ? " on" : ""}" data-sort="asc">Sort A → Z</button>
-      <button type="button" class="fm-item${sorted && st.dir === "desc" ? " on" : ""}" data-sort="desc">Sort Z → A</button>
+      <button type="button" class="fm-item${st.sort === String(c.i) && st.dir === "asc" ? " on" : ""}" data-sort="asc">Sort A to Z</button>
+      <button type="button" class="fm-item${st.sort === String(c.i) && st.dir === "desc" ? " on" : ""}" data-sort="desc">Sort Z to A</button>
       ${sorted ? `<button type="button" class="fm-item" data-sort="none">Remove sort</button>` : ""}
+      <div class="fm-colors" hidden>
+        ${acc("scolor", "Sort by colour", false)}<div class="fm-panel" data-panel="scolor" hidden><div class="fm-cl" data-colors="sort"><span class="muted fv-note">Loading…</span></div></div>
+        ${acc("fcolor", "Filter by colour", false)}<div class="fm-panel" data-panel="fcolor" hidden><div class="fm-cl" data-colors="filter"><span class="muted fv-note">Loading…</span></div></div>
+      </div>
       <hr>
-      ${c.kind === "bool" ? "" : `<div class="fm-sec"><div class="fm-h">Filter by condition</div>
+      ${c.kind === "bool" ? "" : `${acc("cond", "Filter by condition", !!draft.c)}<div class="fm-panel" data-panel="cond" ${draft.c ? "" : "hidden"}>
         <select class="fc-op"><option value="">None</option>${COND[condKind].map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
-        <input class="fc-a" type="${inputType}" autocomplete="off"><input class="fc-b" type="${inputType}" autocomplete="off"></div><hr>`}
-      <div class="fm-sec"><div class="fm-h">Filter by values</div>
-        <input class="fv-search" type="search" placeholder="Search values…" autocomplete="off">
-        <div class="fv-bar"><button type="button" data-fv="all">Select all</button><button type="button" data-fv="none">Clear</button><span class="muted fv-count"></span></div>
+        <input class="fc-a" type="${inputType}" autocomplete="off"><input class="fc-b" type="${inputType}" autocomplete="off"></div>`}
+      ${acc("vals", "Filter by values", true)}<div class="fm-panel" data-panel="vals">
+        <div class="fv-bar"><span><button type="button" data-fv="all" class="fv-all">Select all</button> - <button type="button" data-fv="none">Clear</button></span><span class="muted fv-count"></span></div>
+        <div class="fv-searchbox"><input class="fv-search" type="search" placeholder="" aria-label="Search values" autocomplete="off"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div>
         <div class="fv-list"><div class="muted fv-note">Loading…</div></div></div>
       ${ctx.isAdmin() ? `<hr><button type="button" class="fm-item" data-protectcol>🔒 ${colLocks[c.i] ? "Change protection…" : "Protect this column…"}</button>` : ""}
       <div class="fm-foot"><button type="button" class="btn small" data-fm="clear">Clear filter</button><span class="grow"></span><button type="button" class="btn small" data-fm="cancel">Cancel</button><button type="button" class="btn small primary" data-fm="ok">OK</button></div>`;
@@ -749,6 +757,19 @@ export async function mount(el, params, ctx) {
     menu.style.maxHeight = Math.max(260, innerHeight - r.bottom - 16) + "px";
     fm = { el: menu, col: c.i, outside: (e) => { if (!menu.contains(e.target) && !e.target.closest("[data-fb]")) closeFilterMenu(); } };
     document.addEventListener("mousedown", fm.outside, true);
+
+    // the colour sections appear only for a column that has colours; each one opens like in Google Sheets
+    let colorList = [];
+    const drawColors = () => {
+      const sortBox = menu.querySelector('[data-colors="sort"]'), filterBox = menu.querySelector('[data-colors="filter"]');
+      sortBox.innerHTML = colorList.map((x) => `<button type="button" class="fm-item fm-color${st.sort === `color:${c.i}:${x.c || "none"}` ? " on" : ""}" data-sortcolor="${esc(x.c || "none")}">${swatch(x.c)}<span>${esc(x.name)}</span><span class="muted">${fmt(x.n)}</span></button>`).join("");
+      filterBox.innerHTML = colorList.map((x) => `<label class="fv-row"><input type="checkbox" data-color="${esc(x.c)}" ${draft.colors.has(x.c) ? "checked" : ""}>${swatch(x.c)}<span class="fv-t">${esc(x.name)}</span><span class="muted fv-n">${fmt(x.n)}</span></label>`).join("");
+    };
+    api("/api/colors", { col: c.i, q: st.q, card: st.card, flt: Object.fromEntries(Object.entries(st.cf).filter(([k]) => +k !== c.i)) }).then((out) => {
+      if (fm?.el !== menu) return;
+      colorList = out.colors;
+      if (colorList.some((x) => x.c)) { menu.querySelector(".fm-colors").hidden = false; drawColors(); }
+    }).catch(() => {});
 
     // condition
     const op = menu.querySelector(".fc-op"), ca = menu.querySelector(".fc-a"), cb = menu.querySelector(".fc-b");
@@ -773,7 +794,9 @@ export async function mount(el, params, ctx) {
       listEl.innerHTML = shown.map((x, n) => `<label class="fv-row"><input type="checkbox" data-n="${n}" ${checked(x.v) ? "checked" : ""}><span class="fv-t">${esc(valueLabel(c, x.v))}</span><span class="muted fv-n">${fmt(x.n)}</span></label>`).join("")
         || `<div class="muted fv-note">No matching values</div>`;
       if (more) listEl.insertAdjacentHTML("beforeend", `<div class="muted fv-note">Showing the first 500 values. Search to find others.</div>`);
-      countEl.textContent = shown.length ? `${fmt(shown.filter((x) => checked(x.v)).length)} of ${fmt(shown.length)} selected` : "";
+      countEl.textContent = shown.length ? `Displaying ${fmt(shown.length)}` : "";
+      const allBtn = menu.querySelector(".fv-all");
+      if (allBtn) allBtn.textContent = shown.length ? `Select all ${fmt(shown.length)}` : "Select all";
     };
     const loadValues = async () => {
       try {
@@ -786,7 +809,9 @@ export async function mount(el, params, ctx) {
     const searchSoon = debounce(loadValues, 250);
     search.oninput = searchSoon;
     menu.addEventListener("change", (e) => {
-      const box = e.target.closest(".fv-row input");
+      const cb2 = e.target.closest("[data-color]");
+      if (cb2) { if (cb2.checked) draft.colors.add(cb2.dataset.color); else draft.colors.delete(cb2.dataset.color); return; }
+      const box = e.target.closest(".fv-row input:not([data-color])");
       if (!box) return;
       const v = shown[+box.dataset.n].v;
       if ((draft.mode === "out") === box.checked) draft.set.delete(v); else draft.set.add(v);
@@ -805,10 +830,20 @@ export async function mount(el, params, ctx) {
         cond = { op: op.value, a: need ? a : "", b: op.value === "between" ? b : "" };
       }
       const vals = draft.mode === "out" && !draft.set.size ? null : { mode: draft.mode, list: [...draft.set] };
-      if (cond || vals) st.cf[c.i] = { c: cond, v: vals }; else delete st.cf[c.i];
+      const kc = draft.colors.size ? { list: [...draft.colors] } : null;
+      if (cond || vals || kc) st.cf[c.i] = { c: cond, v: vals, k: kc }; else delete st.cf[c.i];
       finish();
     };
     menu.addEventListener("click", (e) => {
+      const ac = e.target.closest("[data-acc]"), sc2 = e.target.closest("[data-sortcolor]");
+      if (ac) {
+        const panel = menu.querySelector(`[data-panel="${ac.dataset.acc}"]`), open = panel.hidden;
+        panel.hidden = !open;
+        ac.setAttribute("aria-expanded", open ? "true" : "false");
+        ac.querySelector(".fm-arrow").textContent = open ? "▾" : "▸";
+        return;
+      }
+      if (sc2) { st.sort = `color:${c.i}:${sc2.dataset.sortcolor}`; st.dir = "asc"; finish(); return; }
       const so = e.target.closest("[data-sort]"), fv = e.target.closest("[data-fv]"), fb = e.target.closest("[data-fm]");
       if (e.target.closest("[data-protectcol]")) {
         closeFilterMenu();
@@ -828,7 +863,7 @@ export async function mount(el, params, ctx) {
         drawValues();
       } else if (fb) {
         if (fb.dataset.fm === "ok") apply();
-        else if (fb.dataset.fm === "clear") { delete st.cf[c.i]; finish(); }
+        else if (fb.dataset.fm === "clear") { delete st.cf[c.i]; if (st.sort.startsWith(`color:${c.i}:`)) { st.sort = ""; st.dir = "asc"; } finish(); }
         else closeFilterMenu();
       }
     });
@@ -868,7 +903,7 @@ export async function mount(el, params, ctx) {
     } catch { /* try again at the next change */ }
   }
   async function checkForChanges() {
-    if (!el.isConnected || location.hash !== "#orders") return clearInterval(poll);
+    if (!el.isConnected || location.hash.split("?")[0] !== "#orders") return clearInterval(poll);
     if (document.hidden || st.edit || dd || fm || dragging) return;
     try {
       const { v } = await api("/api/version");
@@ -1200,6 +1235,7 @@ export async function mount(el, params, ctx) {
       const name = cols.find((c) => c.i === +k).name;
       if (f.c) parts.push(`${name} ${f.c.op}${f.c.a ? " " + f.c.a : ""}`);
       if (f.v) parts.push(`${name}: ${f.v.mode === "in" ? f.v.list.length + " value(s)" : "all but " + f.v.list.length}`);
+      if (f.k) parts.push(`${name}: ${f.k.list.length} colour(s)`);
     }
     if (v.sort) parts.push(`sorted by ${cols.find((c) => c.i === +v.sort)?.name || "a deleted column"} ${v.dir === "desc" ? "Z→A" : "A→Z"}`);
     return parts.join(" · ") || "no filters";
@@ -1352,6 +1388,9 @@ export async function mount(el, params, ctx) {
   }
   const v0 = activeView();
   if (v0) { st.q = v0.q; st.card = v0.card; st.cf = JSON.parse(JSON.stringify(known(v0.cf))); st.sort = v0.sort; st.dir = v0.dir; $("#q").value = v0.q; }
+  // coming from a colour card on the Dashboard: show only the rows painted that colour (Product Name is painted by every status colour and never by the duplicate one)
+  const wantColor = params.get("color"), colorCol = cols.find((c) => c.key === "Product Name");
+  if (/^#[0-9a-f]{6}$/.test(wantColor || "") && colorCol) { st.q = ""; st.card = ""; st.sort = ""; st.dir = "asc"; st.cf = { [colorCol.i]: { c: null, v: null, k: { list: [wantColor] } } }; $("#q").value = ""; }
   renderCards(); drawHead(); fit(); reset();
   loadDupes();
 }

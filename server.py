@@ -4,10 +4,11 @@ Standard library only. Run `python server.py`, then open http://localhost:8765
 """
 import amazon
 import base64
+import cformat
 import clock
 import dashboard
 import csv, hashlib, io, json, getpass, os, re, sys, sqlite3, tempfile, threading, time, urllib.error, urllib.parse, urllib.request, uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,7 +41,7 @@ RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the 
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
 # The version people see (sign-in page and the tag in the app). Raise it when a new version is pushed: 1.0.1 -> 1.0.2 for a fix, 1.1.0 for a new feature.
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 PORT = int(os.environ.get("PORT", "8765"))
 MAX_UPLOAD = 300 * 1024 * 1024
 
@@ -316,6 +317,7 @@ def attach_custom_dropdowns(db):
 def connect(path=None):
     db = sqlite3.connect(path or DB)
     db.row_factory = sqlite3.Row
+    db.create_function("cf_nomatch", 2, cformat.no_match, deterministic=True)  # for the Label Chip colour
     db.execute(EDITS_SQL)
     for q in DD_SQL + scan.SCAN_SQL:
         db.execute(q)
@@ -591,6 +593,12 @@ def like_arg(text):
     return "%" + text.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
+def fill_expr(j):
+    """The SQL for the conditional-formatting fill colour of column number j (see cformat.py)."""
+    now = clock.now()
+    return cformat.fill_sql(IX, COLUMNS[j], now.strftime("%Y-%m-%d"), (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M"))
+
+
 def column_conditions(j, f):
     """SQL for one column's filter: f = {"c": {op, a, b} (condition), "v": {mode: "in"|"out", list: [...]} (values)}."""
     out, args = [], []
@@ -645,6 +653,11 @@ def column_conditions(j, f):
             elif op == "eq":
                 out.append(f"LOWER({col}) = ?")
                 args.append(a.lower())
+    k = f.get("k")  # filter by colour: only the cells that are painted one of these colours ("" is no colour)
+    if isinstance(k, dict) and k.get("list"):
+        picks = [str(x)[:12] for x in k["list"]][:40]
+        out.append(f"{fill_expr(j)} IN ({','.join('?' * len(picks))})")
+        args += picks
     v = f.get("v")
     if v:
         vals = [str(x) for x in (v.get("list") or [])]
@@ -753,13 +766,14 @@ def clean_view(b):
     for k, f in (b.get("cf") or {}).items():
         if not str(k).isdigit() or not isinstance(f, dict):
             continue
-        c, v = f.get("c"), f.get("v")
+        c, v, kc = f.get("c"), f.get("v"), f.get("k")
         cond = {"op": str(c.get("op", ""))[:20], "a": str(c.get("a", ""))[:200], "b": str(c.get("b", ""))[:200]} if isinstance(c, dict) and c.get("op") else None
         vals = {"mode": "in" if v.get("mode") == "in" else "out", "list": [str(x)[:200] for x in (v.get("list") or [])[:2000]]} if isinstance(v, dict) else None
-        if cond or vals:
-            cf[str(k)] = {"c": cond, "v": vals}
+        colors = {"list": [str(x)[:12] for x in (kc.get("list") or [])[:40]]} if isinstance(kc, dict) and kc.get("list") else None
+        if cond or vals or colors:
+            cf[str(k)] = {"c": cond, "v": vals, "k": colors}
     return {"q": str(b.get("q", ""))[:200], "card": str(b.get("card", ""))[:40], "cf": cf,
-            "sort": str(b.get("sort", ""))[:4], "dir": "desc" if b.get("dir") == "desc" else "asc"}
+            "sort": str(b.get("sort", ""))[:40], "dir": "desc" if b.get("dir") == "desc" else "asc"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -875,6 +889,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(self.api_orders(flatten(params)))
             if u.path == "/api/values":
                 return self.send_json(self.api_values(flatten(params)))
+            if u.path == "/api/colors":
+                return self.send_json(self.api_colors(flatten(params)))
             if u.path == "/api/version":
                 return self.send_json({"v": VERSION[0]})
             if u.path == "/api/returns":
@@ -945,6 +961,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(self.api_cells(json.loads(self.body() or b"{}")))
             if path == "/api/orders":
                 return self.send_json(self.api_orders(json.loads(self.body() or b"{}")))
+            if path == "/api/colors":
+                return self.send_json(self.api_colors(json.loads(self.body() or b"{}")))
             if path == "/api/values":
                 return self.send_json(self.api_values(json.loads(self.body() or b"{}")))
             if path.startswith("/api/returns/"):
@@ -1085,7 +1103,11 @@ class Handler(BaseHTTPRequestHandler):
             total = db.execute(f"SELECT COUNT(*) FROM orders{where}", args).fetchone()[0]
             sort = str(p.get("sort", ""))
             order = "rn DESC" if sort == "rn" and p.get("dir") == "desc" else "rn"  # "rn": the order of entry (newest first for the cards)
-            if sort.isdigit() and int(sort) < len(COLUMNS):
+            m = re.fullmatch(r"color:(\d+):(#[0-9a-f]{6}|dup|none)", sort)
+            if m and int(m.group(1)) < len(COLUMNS) and ACTIVE[int(m.group(1))]:  # one colour first, the rest after
+                want = "" if m.group(2) == "none" else m.group(2)
+                order = f"({fill_expr(int(m.group(1)))} = '{want}') DESC, rn"
+            elif sort.isdigit() and int(sort) < len(COLUMNS):
                 j = int(sort)
                 d = "DESC" if p.get("dir") == "desc" else "ASC"
                 expr = f"CAST(c{j} AS REAL)" if KINDS[j] == "num" else f"c{j}"
@@ -1111,6 +1133,23 @@ class Handler(BaseHTTPRequestHandler):
         lk["defs"] = {i: lk["defs"][i] for i in set(rl.values()) | set(lk["cols"].values()) if i in lk["defs"]}
         lk["rows"] = rl
         return {"total": total, "offset": offset, "rows": [list(r) for r in rows], "dv": dv, "lists": lists, "locks": lk}
+
+    def api_colors(self, p):
+        """The fill colours that appear in one column, with how many rows have each (among the rows the OTHER filters leave visible)."""
+        j = int(p.get("col", 0))
+        if not 0 <= j < len(COLUMNS) or not ACTIVE[j]:
+            raise ValueError("bad column")
+        where, args = build_where(p, skip=j)
+        expr = fill_expr(j)
+        if expr == "''":
+            return {"colors": []}
+        with lock:
+            db = connect()
+            try:
+                rows = db.execute(f"SELECT {expr} AS k, COUNT(*) FROM orders{where} GROUP BY k ORDER BY (k = ''), k", args).fetchall()
+            finally:
+                db.close()
+        return {"colors": [{"c": r[0], "n": r[1], "name": cformat.NAMES.get(r[0], "") if r[0] else "No colour"} for r in rows]}
 
     def api_values(self, p):
         """The distinct values of one column with how many orders have each, among the orders that the OTHER filters

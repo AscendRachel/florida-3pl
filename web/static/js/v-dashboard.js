@@ -1,10 +1,26 @@
 // Dashboard: the day's numbers (the sheet's Dashboard tab). Times are US Eastern, the warehouse's clock.
+import { textOn } from "./cond-format.js";
 import { $, api, brand, dialog, esc, fmt, toast, tzEastern } from "./util.js";
 
 const hourLabel = (h) => {
   const f = (x) => `${x % 12 || 12}:00 ${x < 12 ? "AM" : "PM"}`;
   return `${f(h)} - ${f(h).replace(":00", ":59")}`;
 };
+// the Rows Color Legend of the SOP: the fills are the ones All Orders paints (cond-format.js)
+const LEGEND = [
+  ["Yellow-Green", "#00ff00", "The shipment status of the order to the warehouse is marked as delivered from Amazon."],
+  ["Gray", "#b7b7b7", "The order is in transit to the customer from the Florida warehouse."],
+  ["Yellow", "#ffff00", "The order has been successfully delivered to the customer."],
+  ["Cyan Blue", "#00ffff", "The order has already been refunded by Amazon for reasons such as cancellation, return, or damage."],
+  ["Red", "#ff0000", "Late delivery. The estimated delivery date scheduled by Amazon has passed, and the order was not delivered on time."],
+  ["Dark Green", "#6aa84f", "Unfulfilled order or the order was not placed on Amazon."],
+  ["Orange", "#ff9900", "Assumed not received. This happens when Amazon marks the shipment as delivered, but it has not actually arrived at the warehouse."],
+  ["Magenta", "#ff00ff", "Shipped by 3PL, but the tracking status shows no movement."],
+  ["Brown", "#783f04", "Orders that need to be returned to Amazon."],
+  ["Pink", "#f4cccc", "Orders that need to be refunded through Amazon."],
+  ["Purple", "#9900ff", "Return to Sender. The package was unsuccessfully delivered and is being returned to the sender (3PL/warehouse)."],
+];
+
 const TONE = { estimated: "info", warehouse: "violet", hold: "warn", customer: "ok", amazon: "info", arrived: "ok" };
 
 export async function mount(el, params, ctx) {
@@ -41,6 +57,9 @@ export async function mount(el, params, ctx) {
         <div class="dash-l">${esc(c.label)}${c.note ? `<div class="muted">${esc(c.note)}</div>` : ""}</div></div>`).join("")}</div>
       <div class="dash-cards dash-counters">${data.counters.map((c) => `<div class="scard neutral dash-card" title="${esc(c.note)}"><div class="dash-n">${fmt(c.n)}</div>
         <div class="dash-l">${esc(c.label)}<div class="muted">${esc(c.note)}</div></div></div>`).join("")}</div>
+      <div class="dash-legend-head"><h3>Rows color legend</h3><span class="muted">Always refer to the row color in All Orders to understand the status of an order and take the appropriate action.</span></div>
+      <div class="dash-cards dash-legend">${LEGEND.map(([name, hex, text], i) => `<a class="legend-card" href="#orders?color=${encodeURIComponent(hex)}" title="Show the ${esc(name)} orders in All Orders" style="--lg:${hex};--lg-fg:${textOn(hex)}"><div class="legend-title"><span class="legend-n">${i + 1}</span>${esc(name)}</div>
+        <div class="legend-text">${esc(text)}</div></a>`).join("")}</div>
       <div class="dash-tables">
         ${table("All Orders", data.orders, data.operators, data.orders_total, "Shipped to customer, by the hour")}
         ${table("Store Returns", data.returns, data.operators, data.returns_total, "Shipped to Amazon, by the hour")}
