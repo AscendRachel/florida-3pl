@@ -49,6 +49,8 @@ export async function mount(el, params, ctx) {
     ? ["Label Number", "Store Order No.", "Product Name", "Customer Name", "Brand", "SKU", "STOCK NO.", "Source Order Number", "Tracking Number To Customer", "Source Tracking Number", "Notes", "Store"].map((k) => val(it.r, k)).join(" ")
     : [it.r.store, it.r.stock_no, it.r.sku, it.r.order_number, it.r.product, it.r.notes].join(" ")).toLowerCase();
 
+  const numberOf = (it) => { const n = parseInt(stockNo(it), 10); return Number.isNaN(n) ? -1 : n; };
+
   async function loadAll() {
     const flt = { [idx("Stock")]: { v: { mode: "in", list: ["TRUE"] } } };
     let rows = [], total = 0;
@@ -59,9 +61,8 @@ export async function mount(el, params, ctx) {
       if (!out.rows.length) break;
     } while (rows.length < total);
     kohlsRows = (await api("/api/kohls")).rows;
-    const number = (it) => { const n = parseInt(stockNo(it), 10); return Number.isNaN(n) ? -1 : n; };
     items = [...rows.map((r) => ({ kind: "order", r })), ...kohlsRows.map((r) => ({ kind: "kohls", r }))];
-    items.sort((a, b) => number(b) - number(a)); // the highest stock number first
+    items.sort((a, b) => numberOf(b) - numberOf(a)); // the highest stock number first
   }
 
   const matching = (skip) => {
@@ -190,29 +191,26 @@ export async function mount(el, params, ctx) {
   async function editOrder(it) {
     const r = it.r, cur = (k) => val(r, k);
     const res = await dialog({
-      title: `${cur("Label Number")} · ${cur("Customer Name")}`,
-      wide: true,
-      body: `<label class="field"><span>${esc(label("Notes"))}</span><textarea name="Notes" rows="3">${esc(cur("Notes"))}</textarea></label>
-        <div class="checkgrid">${BOOLS.map((k) => `<label class="check"><input type="checkbox" name="${esc(k)}" ${cur(k) === "TRUE" ? "checked" : ""}> ${esc(label(k))}</label>`).join("")}</div>
-        <p class="hint">Ticking Shipped to Customer or Shipped to Amazon stamps the date and time, as in All Orders. Unticking Stock takes the order off this page. Everything you change is recorded under your name.</p>`,
-      actions: [["Cancel", "close"], ["Save", "ok", "primary"]],
+      title: "Update record",
+      body: `<label class="field"><span>Add Notes:</span><textarea name="Notes" rows="2">${esc(cur("Notes"))}</textarea></label>
+        <label class="field"><span>${esc(label("STOCK NO."))} *</span><input name="stock" value="${esc(cur("STOCK NO."))}" required autocomplete="off"></label>
+        <label class="check"><input type="checkbox" name="ship" ${cur("Shipped to Customer") === "TRUE" ? "checked" : ""}> ${esc(label("Shipped to Customer"))}</label>`,
+      actions: [["Cancel", "close"], ["Update", "ok", "primary"]],
     });
     if (res.value !== "ok") return;
     const f = new FormData(res.el.querySelector("form"));
     const edits = [];
-    const now = String(f.get("Notes") ?? "");
-    if (now !== cur("Notes")) edits.push({ rn: r[0], col: idx("Notes"), value: now });
-    for (const k of BOOLS) {
-      const on = f.get(k) ? "TRUE" : "FALSE";
-      if (on !== (cur(k) === "TRUE" ? "TRUE" : "FALSE")) edits.push({ rn: r[0], col: idx(k), value: on });
-    }
+    const notes = String(f.get("Notes") ?? ""), stock = String(f.get("stock") ?? "").trim(), ship = f.get("ship") ? "TRUE" : "FALSE";
+    if (notes !== cur("Notes")) edits.push({ rn: r[0], col: idx("Notes"), value: notes });
+    if (stock !== cur("STOCK NO.")) edits.push({ rn: r[0], col: idx("STOCK NO."), value: stock });
+    if (ship !== (cur("Shipped to Customer") === "TRUE" ? "TRUE" : "FALSE")) edits.push({ rn: r[0], col: idx("Shipped to Customer"), value: ship });
     if (!edits.length) return;
     try {
       const out = await api("/api/cells", { edits });
       edits.forEach((e, i) => { r[e.col + 1] = out.values[i]; });
       (out.also || []).forEach((a) => { if (a.rn === r[0]) r[a.col + 1] = a.value; });
       if (out.skipped) toast(out.reason, "bad"); else toast("Saved.");
-      if (val(r, "Stock") !== "TRUE") items = items.filter((x) => x !== it);
+      items.sort((x, y) => numberOf(y) - numberOf(x)); // the stock number may have changed
       redraw(false);
     } catch (e) { toast(e.message, "bad"); }
   }
@@ -221,7 +219,7 @@ export async function mount(el, params, ctx) {
     const res = await dialog({
       title: `${r.store || "Kohl's"} · ${r.sku || r.order_number || "stock"}`,
       wide: true,
-      body: `<div class="two" style="gap:14px"><label class="field"><span>SKU</span><input name="sku" value="${esc(r.sku)}"></label><label class="field"><span>STOCK NO.</span><input name="stock_no" value="${esc(r.stock_no)}"></label></div>
+      body: `<label class="field"><span>STOCK NO.</span><input name="stock_no" value="${esc(r.stock_no)}" autocomplete="off"></label>
         <label class="field"><span>Notes</span><textarea name="notes" rows="3">${esc(r.notes)}</textarea></label>
         <div class="checkgrid"><label class="check"><input type="checkbox" name="good" ${r.good === "TRUE" ? "checked" : ""}> Good condition</label><label class="check"><input type="checkbox" name="used" ${r.used === "TRUE" ? "checked" : ""}> Used</label></div>`,
       actions: [["Cancel", "close"], ["Save", "ok", "primary"]],
@@ -229,7 +227,7 @@ export async function mount(el, params, ctx) {
     if (res.value !== "ok") return;
     const f = new FormData(res.el.querySelector("form"));
     const edits = [];
-    for (const k of ["sku", "stock_no", "notes"]) { const now = String(f.get(k) ?? "").trim(); if (now !== (r[k] || "")) edits.push({ id: r.id, field: k, value: now }); }
+    for (const k of ["stock_no", "notes"]) { const now = String(f.get(k) ?? "").trim(); if (now !== (r[k] || "")) edits.push({ id: r.id, field: k, value: now }); }
     for (const k of ["good", "used"]) { const on = !!f.get(k); if (on !== (r[k] === "TRUE")) edits.push({ id: r.id, field: k, value: on }); }
     if (!edits.length) return;
     try {
