@@ -7,6 +7,8 @@ import base64
 import cformat
 import clock
 import dashboard
+import drivenames
+import materials
 import csv, hashlib, io, json, getpass, os, re, sys, sqlite3, tempfile, threading, time, urllib.error, urllib.parse, urllib.request, uuid
 from datetime import datetime, timedelta
 from http.cookies import SimpleCookie
@@ -25,10 +27,12 @@ DATA = ROOT / "data"
 DB = DATA / "orders.db"
 UPLOADS = DATA / "uploads"
 returns.DB = DATA / "returns.db"
+drivenames.DB = DATA / "drive.db"
+materials.DB = DATA / "materials.db"
 auth.DB = DATA / "auth.db"
 locks.FILE = DATA / "locks.json"
 # only admins may do these: they change what everybody sees or how the data is loaded
-ADMIN_POST = {"/api/upload", "/api/upload-link", "/api/import", "/api/dropdown", "/api/returns/settings", "/api/dashboard/operators", "/api/returns/labels", "/api/branding"}  # and everything under /api/columns/ and /api/team/
+ADMIN_POST = {"/api/upload", "/api/upload-link", "/api/import", "/api/dropdown", "/api/returns/settings", "/api/dashboard/operators", "/api/returns/labels", "/api/branding", "/api/kohls/delete", "/api/materials/delete"}  # and everything under /api/columns/ and /api/team/
 # the checkbox that stamps a date and time when it is ticked -> the column that holds the stamp
 SHIP_STAMP = {"Shipped to Customer": "SHIPPED TO  CUSTOMER DATE", "Shipped to Amazon": "SHIPPED TO  AMAZON DATE",
               "ITEM ON HOLD": "Hold Date"}
@@ -41,7 +45,7 @@ RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the 
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
 # The version people see (sign-in page and the tag in the app). Raise it when a new version is pushed: 1.0.1 -> 1.0.2 for a fix, 1.1.0 for a new feature.
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 PORT = int(os.environ.get("PORT", "8765"))
 MAX_UPLOAD = 300 * 1024 * 1024
 
@@ -895,6 +899,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"v": VERSION[0]})
             if u.path == "/api/returns":
                 return self.send_json(self.api_returns())
+            if u.path == "/api/materials":
+                with materials.LOCK:
+                    db = materials.connect()
+                    try:
+                        return self.send_json(materials.list_rows(db))
+                    finally:
+                        db.close()
+            if u.path == "/api/kohls":
+                with returns.LOCK:
+                    db = returns.connect()
+                    try:
+                        return self.send_json({"rows": returns.kohls_list(db), "stores": returns.KOHLS_STORES})
+                    finally:
+                        db.close()
             if u.path == "/api/scan/holds":
                 return self.send_json({"holds": self.read_db(lambda db: scan.holds(db, IX))})
             if u.path == "/api/scan/recent":
@@ -963,8 +981,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(self.api_orders(json.loads(self.body() or b"{}")))
             if path == "/api/colors":
                 return self.send_json(self.api_colors(json.loads(self.body() or b"{}")))
+            if path == "/api/drive/names":
+                return self.send_json(drivenames.names(list(json.loads(self.body() or b"{}").get("ids") or [])))
             if path == "/api/values":
                 return self.send_json(self.api_values(json.loads(self.body() or b"{}")))
+            if path in ("/api/materials/add", "/api/materials/edit", "/api/materials/delete", "/api/materials/bulk"):
+                return self.send_json(self.api_materials_post(path, json.loads(self.body() or b"{}")))
+            if path in ("/api/kohls/add", "/api/kohls/edit", "/api/kohls/delete", "/api/kohls/bulk"):
+                return self.send_json(self.api_kohls_post(path, json.loads(self.body() or b"{}")))
             if path.startswith("/api/returns/"):
                 return self.send_json(self.api_returns_post(path, json.loads(self.body() or b"{}")))
             if path in ("/api/scan", "/api/scan/confirm", "/api/scan/release", "/api/scan/pnr", "/api/scan/count"):
@@ -1207,6 +1231,44 @@ class Handler(BaseHTTPRequestHandler):
                 return {"rows": returns.list_rows(db, DB), "status": returns.status(db), "locks": lk, "labels": load_return_labels()}
             finally:
                 db.close()
+
+    def api_materials_post(self, path, b):
+        with materials.LOCK:
+            db = materials.connect()
+            try:
+                if path == "/api/materials/add":
+                    out = {"row": materials.add(db, self.user["name"], b.get("values"))}
+                elif path == "/api/materials/bulk":
+                    out = {"rows": materials.bulk(db, self.user["name"], list(b.get("edits") or []), list(b.get("new") or []))}
+                elif path == "/api/materials/edit":
+                    out = {"row": materials.edit(db, int(b.get("id", 0)), str(b.get("field", "")), b.get("value"), self.user["name"])}
+                else:
+                    materials.delete(db, int(b.get("id", 0)))
+                    out = {}
+            finally:
+                db.close()
+        bump()
+        out["v"] = VERSION[0]
+        return out
+
+    def api_kohls_post(self, path, b):
+        with returns.LOCK:
+            db = returns.connect()
+            try:
+                if path == "/api/kohls/add":
+                    out = {"row": returns.kohls_add(db, self.user["name"], b.get("values"))}
+                elif path == "/api/kohls/bulk":
+                    out = {"rows": returns.kohls_bulk(db, self.user["name"], list(b.get("edits") or []), list(b.get("new") or []))}
+                elif path == "/api/kohls/edit":
+                    out = {"row": returns.kohls_edit(db, int(b.get("id", 0)), str(b.get("field", "")), b.get("value"), self.user["name"])}
+                else:
+                    returns.kohls_delete(db, int(b.get("id", 0)))
+                    out = {}
+            finally:
+                db.close()
+        bump()
+        out["v"] = VERSION[0]
+        return out
 
     def api_returns_post(self, path, b):
         if path == "/api/returns/labels":

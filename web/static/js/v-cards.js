@@ -1,5 +1,6 @@
 // Order Cards: every order as one card (picture and details), with the filters and the search the warehouse uses every day.
 import { $, api, brand, debounce, dialog, esc, fmt, toast } from "./util.js";
+import { cardTabs } from "./card-tabs.js";
 import { labelPages, printPages } from "./print.js";
 
 const PAGE = 48;
@@ -18,6 +19,16 @@ const BOOLS = ["Shipped to Customer", "Shipped to Amazon", "ITEM ON HOLD", "Labe
 const yesNo = (v) => (v === "TRUE" ? "Yes" : v === "FALSE" ? "No" : v === "" ? "(blank)" : v);
 
 export async function mount(el, params, ctx) {
+  const tab = params.get("tab");
+  const hold = tab === "hold"; // the Item on Hold side: only the orders whose Hold box is ticked
+  const rta = tab === "rta"; // the Return to Amazon side: only the orders whose Tracking Status is Return to Amazon
+  const rts = tab === "rts"; // the Return to Sender side, the same as Return to Amazon with the other Tracking Status
+  const byStatus = rta ? "Return to Amazon" : rts ? "Return to Sender" : ""; // the Tracking Status these sides keep
+  const narrow = hold || !!byStatus; // these sides have the shorter filter row
+  const here = tab && ["hold", "rta", "rts"].includes(tab) ? `#cards?tab=${tab}` : "#cards";
+  if (params.get("tab") === "materials") return (await import("./v-material-cards.js")).mount(el, params, ctx); // the Materials side
+  if (params.get("tab") === "stock") return (await import("./v-stock-cards.js")).mount(el, params, ctx); // the Stocks side
+  if (params.get("tab") === "returns") return (await import("./v-return-cards.js")).mount(el, params, ctx); // the Store Returns side
   const meta = await api("/api/meta");
   const cols = meta.columns;
   const byKey = Object.fromEntries(cols.map((c) => [c.key, c]));
@@ -25,25 +36,30 @@ export async function mount(el, params, ctx) {
   const label = (key) => byKey[key]?.name || key; // an admin may have renamed a column
 
   const st = { q: "", flt: {}, total: 0 };
+  // the Return to Amazon and Return to Sender cards show the return due date that the Returns tab holds for the same order number
+  const dueBy = new Map();
+  if (byStatus) { try { for (const r of (await api("/api/returns")).rows) if (r.po && r.due_date && !r.removed) dueBy.set(r.po.trim().toLowerCase(), r.due_date); } catch { /* the date is only a hint */ } }
   let rows = []; // the cards loaded so far (arrays: [rn, c0, c1, ...])
   let loading = false, gen = 0, knownV = null, menu = null;
   const val = (r, key) => (byKey[key] ? r[byKey[key].i + 1] || "" : "");
 
   el.innerHTML = `<div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>Order Cards</h2></div>
-      <div class="muted" id="cardCount"></div></div>
+      <div class="cardtabs">${cardTabs(narrow ? tab : "")}</div>
+      </div>
+    <div class="panel cardtotal"><span>${hold ? "ITEM ON HOLD TOTAL CARDS:" : rta ? "RETURN TO AMAZON TOTAL CARDS:" : rts ? "RETURN TO SENDER TOTAL CARDS:" : "ALL ORDERS TOTAL CARDS:"}</span><b id="cardCount"></b></div>
     <div class="cardbar"><div class="cardfilters" id="cardFilters"></div>
       <input type="search" id="cardSearch" class="cardsearch" placeholder="Search" autocomplete="off"></div>
     <div class="cardgrid" id="cardGrid"></div>
     <div class="cardmore" id="cardMore"></div>`;
 
   // labels that were made ahead of time have no order in them yet: they get no card. Newest first.
-  const withOrders = (flt) => ({ ...flt, [idx("Store Order No.")]: { c: { op: "notempty" } } });
+  const withOrders = (flt) => ({ ...flt, [idx("Store Order No.")]: { c: { op: "notempty" } }, ...(hold ? { [idx("ITEM ON HOLD")]: { v: { mode: "in", list: ["TRUE"] } } } : {}), ...(byStatus ? { [idx("Tracking Status")]: { v: { mode: "in", list: [byStatus] } } } : {}) });
   const query = (extra = {}) => ({ q: st.q, flt: withOrders(st.flt), sort: "rn", dir: "desc", ...extra });
 
   // ---------- filters
   const activeCount = () => Object.values(st.flt).filter((f) => f?.v?.list?.length).length;
   function drawFilters() {
-    $("#cardFilters").innerHTML = FILTERS.filter((k) => byKey[k]).map((k) => {
+    $("#cardFilters").innerHTML = FILTERS.filter((k) => byKey[k] && !(narrow && k === "Shipped to Amazon")).map((k) => {
       const n = st.flt[idx(k)]?.v?.list?.length || 0;
       return `<button class="cardfilter${n ? " on" : ""}" data-filter="${esc(k)}"><span>${esc(label(k))}</span>${n ? `<b class="cfcount">${n}</b>` : ""}<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
     }).join("") + (activeCount() || st.q ? `<button class="cardclear" id="clearFilters">Clear all</button>` : "");
@@ -96,8 +112,10 @@ export async function mount(el, params, ctx) {
     return `<article class="ocard" data-n="${n}">
       ${isUrl(img) ? `<div class="oc-img"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(img)}" alt="" data-zoom="${n}"></div>` : `<div class="oc-img none"></div>`}
       <div class="oc-body">
+        ${byStatus ? field("RETURN DUE DATE:", esc(showDate(dueBy.get(v("Store Order No.").trim().toLowerCase()) || "") || "-")) : ""}
         <div class="oc-head"><div>${esc(v("Customer Name"))}</div><div>${esc(v("Store Order No."))}</div><div>LABEL #: ${esc(v("Label Number"))}</div></div>
         ${field("📦 NO. OF PRODUCTS IN THIS ORDER:", esc(v("Number of Orders")))}
+        ${narrow && v("ITEM ON HOLD") === "TRUE" ? `<div class="oc-hold">⚠ ITEM IN THIS ORDER IS ON HOLD</div>` : ""}
         ${field("Gift Note", esc(v("Gift Note")))}
         ${field("Store:", `<small>${esc(v("Store"))}</small>`)}
         <hr>
@@ -119,9 +137,18 @@ export async function mount(el, params, ctx) {
     </article>`;
   }
 
-  const drawCount = () => { $("#cardCount").textContent = `${fmt(st.total)} order${st.total === 1 ? "" : "s"}`; };
+  // a picture that failed (Amazon answers slowly when many are asked at once) is asked for again once
+  $("#cardGrid").addEventListener("error", (e) => {
+    const im = e.target;
+    if (im.tagName !== "IMG" || im.dataset.retry) return;
+    im.dataset.retry = "1";
+    const src = im.getAttribute("src");
+    setTimeout(() => { if (im.isConnected) im.src = src + (src.includes("?") ? "&" : "?") + "r=1"; }, 1500);
+  }, true);
+
+  const drawCount = () => { $("#cardCount").textContent = fmt(st.total); };
   function more() {
-    $("#cardMore").innerHTML = rows.length < st.total ? `<button class="btn" id="loadMore">Show more (${fmt(st.total - rows.length)} left)</button>` : rows.length ? `<span class="muted">That is all.</span>` : "";
+    $("#cardMore").innerHTML = rows.length < st.total ? `<button class="btn" id="loadMore">Show more (${fmt(st.total - rows.length)} left)</button>` : "";
   }
 
   async function load(append) {
@@ -150,9 +177,17 @@ export async function mount(el, params, ctx) {
       const out = await api("/api/orders", query({ offset: 0, limit: Math.min(500, want) }));
       if (my !== gen) return;
       st.total = out.total; rows = out.rows;
-      const top = window.scrollY;
-      $("#cardGrid").innerHTML = rows.length ? rows.map(card).join("") : `<div class="empty">No orders match.</div>`;
-      window.scrollTo(0, top);
+      const grid = $("#cardGrid"), kids = grid.querySelectorAll(":scope > .ocard");
+      if (!rows.length || kids.length !== grid.children.length) grid.innerHTML = rows.length ? rows.map(card).join("") : `<div class="empty">No orders match.</div>`;
+      else {
+        // only the cards that changed are redrawn: rebuilding all of them cancels the pictures that are still loading
+        const html = rows.map(card);
+        html.forEach((h, k) => {
+          if (k >= kids.length) return grid.insertAdjacentHTML("beforeend", h);
+          if (kids[k].outerHTML !== h.trim()) { const t = document.createElement("template"); t.innerHTML = h.trim(); kids[k].replaceWith(t.content.firstElementChild); }
+        });
+        for (let k = kids.length - 1; k >= html.length; k--) kids[k].remove();
+      }
       drawCount(); more();
     } catch { /* offline for a moment */ }
   }
@@ -161,18 +196,11 @@ export async function mount(el, params, ctx) {
   async function edit(n) {
     const r = rows[n];
     if (!r) return;
-    const opts = {};
-    for (const k of ["Source Order Status", "Tracking Status"]) {
-      try { opts[k] = (await api("/api/values", { col: idx(k) })).values.map((x) => x.v).filter(Boolean); } catch { opts[k] = []; }
-    }
     const cur = (k) => val(r, k);
-    const select = (k) => `<label class="field"><span>${esc(label(k))}</span><select name="${esc(k)}"><option value=""></option>${[...new Set([...opts[k], cur(k)].filter(Boolean))].map((o) => `<option ${o === cur(k) ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>`;
     const res = await dialog({
       title: `${cur("Label Number")} · ${cur("Customer Name")}`,
       wide: true,
-      body: `<div class="two" style="gap:14px">${select("Source Order Status")}${select("Tracking Status")}</div>
-        <label class="field"><span>${esc(label("Tracking Number To Customer"))}</span><input name="Tracking Number To Customer" value="${esc(cur("Tracking Number To Customer"))}"></label>
-        <label class="field"><span>${esc(label("Notes"))}</span><textarea name="Notes" rows="3">${esc(cur("Notes"))}</textarea></label>
+      body: `<label class="field"><span>${esc(label("Notes"))}</span><textarea name="Notes" rows="3">${esc(cur("Notes"))}</textarea></label>
         <div class="checkgrid">${BOOLS.map((k) => `<label class="check"><input type="checkbox" name="${esc(k)}" ${cur(k) === "TRUE" ? "checked" : ""}> ${esc(label(k))}</label>`).join("")}</div>
         <p class="hint">Ticking Shipped to Customer or Shipped to Amazon stamps the date and time, as in All Orders. Everything you change is recorded under your name.</p>`,
       actions: [["Cancel", "close"], ["Save", "ok", "primary"]],
@@ -180,7 +208,7 @@ export async function mount(el, params, ctx) {
     if (res.value !== "ok") return;
     const f = new FormData(res.el.querySelector("form"));
     const edits = [];
-    for (const k of ["Source Order Status", "Tracking Status", "Tracking Number To Customer", "Notes"]) {
+    for (const k of ["Notes"]) {
       const now = String(f.get(k) ?? "");
       if (now !== cur(k)) edits.push({ rn: r[0], col: idx(k), value: now });
     }
@@ -196,7 +224,8 @@ export async function mount(el, params, ctx) {
       if (out.skipped) toast(out.reason, "bad");
       else toast("Saved.");
       const old = el.querySelector(`.ocard[data-n="${n}"]`);
-      if (old) old.outerHTML = card(r, n);
+      if (old && hold && val(r, "ITEM ON HOLD") !== "TRUE") { old.remove(); st.total--; drawCount(); } // taken off hold: it leaves this page
+      else if (old) old.outerHTML = card(r, n);
     } catch (e) { toast(e.message, "bad"); }
   }
 
@@ -225,14 +254,14 @@ export async function mount(el, params, ctx) {
 
   // a scroll to the end loads the next cards
   const onScroll = () => {
-    if (!el.isConnected || location.hash !== "#cards") return window.removeEventListener("scroll", onScroll);
+    if (!el.isConnected || location.hash !== here) return window.removeEventListener("scroll", onScroll);
     if (window.innerHeight + window.scrollY > document.body.scrollHeight - 600 && rows.length < st.total && !loading) load(true);
   };
   window.addEventListener("scroll", onScroll, { passive: true });
 
   // live: when anything changes in the app, the cards refresh
   const timer = setInterval(async () => {
-    if (!el.isConnected || location.hash !== "#cards") return clearInterval(timer);
+    if (!el.isConnected || location.hash !== here) return clearInterval(timer);
     if (document.hidden || document.querySelector("dialog[open]") || menu) return;
     try {
       const { v } = await api("/api/version");

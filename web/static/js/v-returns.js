@@ -1,6 +1,7 @@
 // Returns: the warehouse's customer returns, synced by the server from the master returns sheet.
 // The warehouse edits only its own columns (Shipped to Amazon, warehouse notes); the rest comes from the sync.
 import { $, ago, api, brand, debounce, dialog, easternMs, esc, fmt, store, toast } from "./util.js";
+import { returnTabs } from "./card-tabs.js";
 import { lockReason, lockTip, protectDialog, renameDialog } from "./protect.js";
 
 // k: field name, kind: text | num | date | select | bool | link | img, edit: the warehouse can change it here
@@ -61,6 +62,7 @@ const CARDS = [
 ];
 
 export async function mount(el, params, ctx) {
+  if (params.get("tab") === "kohls") return (await import("./v-kohls.js")).mount(el, params, ctx); // the Kohl's Returns side
   let data = await api("/api/returns");
   const applyLabels = () => { for (const c of COLS) { c.orig ??= c.name; c.name = data.labels?.[c.k] || c.orig; } }; // admins can rename columns
   applyLabels();
@@ -73,7 +75,8 @@ export async function mount(el, params, ctx) {
   const valueOf = (r, c) => (c.k === "image" ? r.image || "" : r[c.k] ?? "");
 
   el.innerHTML = `<div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>Returns</h2>
-      <p>Customer returns for this warehouse. They are read from the master returns sheet; tick <b>Shipped to Amazon</b> when you send one back.</p></div></div>
+      <p>Customer returns for this warehouse. They are read from the master returns sheet; tick <b>Shipped to Amazon</b> when you send one back.</p></div>
+      <div class="cardtabs" style="align-self:flex-start">${returnTabs("")}</div></div>
     <div class="panel syncbar" id="syncbar"></div>
     <div class="qgrid cards" id="cards"></div>
     <div class="toolbar sheetbar">

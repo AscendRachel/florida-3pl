@@ -8,6 +8,7 @@ const VIEWS = {
   cards: { label: "Order Cards", mod: "./v-cards.js" },
   orders: { label: "All Orders", mod: "./v-orders.js" },
   returns: { label: "Returns", mod: "./v-returns.js" },
+  materials: { label: "Materials", mod: "./v-materials.js" },
   amazon: { label: "Amazon Orders", mod: "./v-amazon.js", admin: true },
   import: { label: "Import", mod: "./v-import.js", admin: true },
   team: { label: "Team", mod: "./v-team.js", admin: true },

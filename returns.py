@@ -46,6 +46,10 @@ SCHEMA = [
         refunded TEXT DEFAULT '', reason TEXT DEFAULT '',
         shipped TEXT DEFAULT 'FALSE', processed_at TEXT DEFAULT '', processed_by TEXT DEFAULT '', wh_notes TEXT DEFAULT '',
         removed INTEGER DEFAULT 0, first_seen TEXT, last_seen TEXT)""",
+    """CREATE TABLE IF NOT EXISTS kohls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT DEFAULT '', stock_no TEXT DEFAULT '', sku TEXT DEFAULT '',
+        order_number TEXT DEFAULT '', product TEXT DEFAULT '', image TEXT DEFAULT '', qty TEXT DEFAULT '',
+        good TEXT DEFAULT 'FALSE', used TEXT DEFAULT 'FALSE', notes TEXT DEFAULT '', updated_by TEXT DEFAULT '', updated_at TEXT DEFAULT '')""",
     "CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT)",
     """CREATE TABLE IF NOT EXISTS sync_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, ok INTEGER, trigger TEXT,
         message TEXT, read INTEGER DEFAULT 0, added INTEGER DEFAULT 0, updated INTEGER DEFAULT 0, removed INTEGER DEFAULT 0)""",
@@ -408,3 +412,64 @@ def edit(db, rid, field, value, operator, revert=False):
         raise ValueError("That column cannot be edited.")
     db.commit()
     return public_row(db.execute("SELECT * FROM returns WHERE rid = ?", (rid,)).fetchone())
+
+
+# ---------------------------------------------------------------- Kohl's returns (a list the warehouse keeps by hand)
+KOHLS_STORES = ["KOHLS GREENTEK", "KOHLS JESS", "KOHLS ACPJR"]
+KOHLS_TEXT = {"store": 60, "stock_no": 60, "sku": 80, "order_number": 60, "product": 400, "image": 600, "qty": 12, "notes": 2000}
+KOHLS_BOOL = ("good", "used")
+
+
+def kohls_list(db):
+    return [dict(r) for r in db.execute("SELECT * FROM kohls ORDER BY id")]
+
+
+def _kohls_bool(v):
+    return "TRUE" if str(v).strip().lower() in ("true", "yes", "y", "1", "checked", "x", "✓") else "FALSE"
+
+
+def kohls_add(db, operator, values=None):
+    v = {k: str((values or {}).get(k, "")).strip()[:n] for k, n in KOHLS_TEXT.items()}
+    g, u = (_kohls_bool((values or {}).get(k, "")) for k in KOHLS_BOOL)
+    cur = db.execute("INSERT INTO kohls (store, stock_no, sku, order_number, product, image, qty, good, used, notes, updated_by, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (v["store"], v["stock_no"], v["sku"], v["order_number"], v["product"], v["image"], v["qty"], g, u, v["notes"], operator, stamp()))
+    db.commit()
+    return dict(db.execute("SELECT * FROM kohls WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+def kohls_bulk(db, operator, edits, new_rows):
+    """A paste: cells of existing rows (edits: [{id, field, value}]) and whole new rows. Returns every row that was touched."""
+    ids = []
+    for e in edits[:5000]:
+        f = str(e.get("field", ""))
+        if f in KOHLS_BOOL:
+            v = _kohls_bool(e.get("value"))
+        elif f in KOHLS_TEXT:
+            v = str(e.get("value") if e.get("value") is not None else "").strip()[:KOHLS_TEXT[f]]
+        else:
+            raise ValueError("That column cannot be edited.")
+        db.execute(f"UPDATE kohls SET {f} = ?, updated_by = ?, updated_at = ? WHERE id = ?", (v, operator, stamp(), int(e.get("id", 0))))
+        ids.append(int(e.get("id", 0)))
+    for values in new_rows[:5000]:
+        ids.append(kohls_add(db, operator, values)["id"])
+    db.commit()
+    return [dict(r) for i in dict.fromkeys(ids) for r in db.execute("SELECT * FROM kohls WHERE id = ?", (i,))]
+
+
+def kohls_edit(db, id_, field, value, operator):
+    if not db.execute("SELECT 1 FROM kohls WHERE id = ?", (id_,)).fetchone():
+        raise ValueError("That row no longer exists.")
+    if field in KOHLS_BOOL:
+        v = "TRUE" if value in (True, "TRUE", "true", 1) else "FALSE"
+    elif field in KOHLS_TEXT:
+        v = str(value if value is not None else "").strip()[:KOHLS_TEXT[field]]
+    else:
+        raise ValueError("That column cannot be edited.")
+    db.execute(f"UPDATE kohls SET {field} = ?, updated_by = ?, updated_at = ? WHERE id = ?", (v, operator, stamp(), id_))
+    db.commit()
+    return dict(db.execute("SELECT * FROM kohls WHERE id = ?", (id_,)).fetchone())
+
+
+def kohls_delete(db, id_):
+    db.execute("DELETE FROM kohls WHERE id = ?", (id_,))
+    db.commit()

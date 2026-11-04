@@ -1,6 +1,6 @@
 // All Orders: the "March" tab as an editable spreadsheet grid (server-side search, filter and sort).
 // Click a cell to select it, type or press Enter / F2 / double-click to edit, arrows / Tab to move, Ctrl+C / V / X / Z work.
-import { $, ago, api, brand, confirmBox, debounce, dialog, esc, fmt, store, toast } from "./util.js";
+import { $, ago, api, brand, confirmBox, debounce, dialog, esc, fmt, store, toast, tzEastern } from "./util.js";
 import { nextSeries } from "./fill.js";
 import { DUP_COLUMNS, makeFormatter } from "./cond-format.js";
 import { lockReason, lockTip, protectDialog, renameDialog } from "./protect.js";
@@ -9,7 +9,7 @@ const ROW_H = 30, HEAD_H = 30, FILT_H = 0, RN_W = 52, PAGE = 100;
 const WIDTHS = {
   "Label Number": 110, "Store Order No.": 190, "Product Name": 360, Brand: 130, QTY: 60,
   "Customer Name": 160, Address: 280, "Source Order Date": 130, "Source Order Number": 170,
-  "Source Tracking Number": 170, "Shipping Label Link": 110, "Product Image Link": 90, "Source Order Status": 140,
+  "Source Tracking Number": 170, "Shipping Label Link": 300, "Product Image Link": 90, "Source Order Status": 140,
   "Tracking Number To Customer": 190, "Delivery Date": 130, "Tracking Status": 140, Notes: 240, Store: 110,
   "PH Team Internal Notes": 240,
 };
@@ -156,6 +156,55 @@ export async function mount(el, params, ctx) {
   }
   const loadDupesSoon = debounce(loadDupes, 700);
 
+  // ---- Google Drive links: show the file's name (it holds the customer and the tracking number), and a preview on hover
+  const driveNames = new Map(); // file id -> name ("" when it cannot be read)
+  const driveId = (url) => /\/d\/([-\w]{25,})/.exec(url)?.[1] || "";
+  let driveTimer = null;
+  const driveWant = new Set();
+  function wantDriveNames() {
+    for (const a of rowsEl.querySelectorAll("a[data-fid]")) if (!driveNames.has(a.dataset.fid)) driveWant.add(a.dataset.fid);
+    if (!driveWant.size || driveTimer) return;
+    driveTimer = setTimeout(async () => {
+      driveTimer = null;
+      const ids = [...driveWant].slice(0, 60);
+      let again = false;
+      try {
+        const out = await api("/api/drive/names", { ids });
+        for (const [id, name] of Object.entries(out.names)) { driveNames.set(id, name); driveWant.delete(id); }
+        again = out.pending > 0;
+        for (const a of rowsEl.querySelectorAll("a[data-fid]")) { const n = driveNames.get(a.dataset.fid); if (n) { a.textContent = n; a.title = n; } }
+      } catch { again = true; }
+      if (again || driveWant.size) driveTimer = setTimeout(() => { driveTimer = null; wantDriveNames(); }, 1500);
+    }, 250);
+  }
+  let hoverCard = null, hoverTimer = null;
+  const hideHover = () => { clearTimeout(hoverTimer); hoverTimer = null; hoverCard?.remove(); hoverCard = null; };
+  rowsEl.addEventListener("mouseover", (e) => {
+    const a = e.target.closest("a[data-fid]");
+    if (!a || hoverCard?.dataset.fid === a.dataset.fid) return;
+    hideHover();
+    hoverTimer = setTimeout(() => {
+      const fid = a.dataset.fid, name = driveNames.get(fid) || "";
+      const card = document.createElement("div");
+      card.className = "drivecard";
+      card.dataset.fid = fid;
+      card.innerHTML = `<div class="dc-name">${esc(name || "File name not available")}</div><iframe src="https://drive.google.com/file/d/${esc(fid)}/preview" referrerpolicy="no-referrer" loading="lazy"></iframe>`;
+      document.body.append(card);
+      const r = a.getBoundingClientRect(), w = card.offsetWidth, h = card.offsetHeight;
+      card.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px";
+      card.style.top = (r.bottom + h + 12 > innerHeight ? Math.max(8, r.top - h - 6) : r.bottom + 6) + "px";
+      card.onmouseleave = hideHover;
+      hoverCard = card;
+    }, 450);
+  });
+  rowsEl.addEventListener("mouseout", (e) => {
+    const a = e.target.closest("a[data-fid]");
+    if (!a || a.contains(e.relatedTarget)) return;
+    clearTimeout(hoverTimer); hoverTimer = null;
+    setTimeout(() => { if (hoverCard && !hoverCard.matches(":hover")) hideHover(); }, 150);
+  });
+  sc.addEventListener("scroll", hideHover, { passive: true });
+
   function cell(c, v, i, r, rn, sel, cf) {
     const style = `width:${width(c)}px;${i === 0 ? `left:${RN_W}px` : ""}${cf ? `;--cf-bg:${cf.bg};--cf-fg:${cf.fg}` : ""}`;
     let h = "", cls = (i === 0 ? " pin" : "") + (cf ? " cf" : "");
@@ -165,7 +214,10 @@ export async function mount(el, params, ctx) {
     else if (c.kind === "date") h = esc(showDate(v));
     else if (c.kind === "select") h = `<span class="pill ${PILL[v] || "s-neutral"}">${esc(v)}</span>`;
     else if (c.kind === "img") h = isUrl(v) ? `<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="${esc(v)}" alt="">` : "";
-    else if (c.kind === "link") h = isUrl(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener" data-link>Open</a>` : esc(v);
+    else if (c.kind === "link") {
+      const fid = isUrl(v) ? driveId(v) : "";
+      h = !isUrl(v) ? esc(v) : fid ? `<a href="${esc(v)}" target="_blank" rel="noopener" data-link data-fid="${fid}"${driveNames.get(fid) ? ` title="${esc(driveNames.get(fid))}"` : ""}>${esc(driveNames.get(fid) || v)}</a>` : `<a href="${esc(v)}" target="_blank" rel="noopener" data-link>${esc(v)}</a>`;
+    }
     else h = esc(v.replace(/\s*\n\s*/g, " ⏎ "));
     if (c.kind === "bool" && !v) cls += " ctr", h = `<input type="checkbox" class="cbx" tabindex="-1">`;
     if (sel) cls += st.act.r === r && st.act.k === i ? " a" : " s";
@@ -188,6 +240,7 @@ export async function mount(el, params, ctx) {
       out += `<div class="gr${r ? "" : " loading"}" data-r="${i}" style="top:${i * ROW_H}px;width:${geo.total}px"><div class="gc rn${inRow ? " s" : ""}${r && rowLocks.has(r[0]) ? " lk" : ""}" style="width:${RN_W}px"${r && rowLocks.has(r[0]) ? ` title="${esc(lockTip(lockDefs[rowLocks.get(r[0])]))}"` : ""}>${r ? r[0] : ""}</div>${list.map((c, k) => cell(c, r ? r[c.i + 1] : "", k, i, r?.[0], inRow && k >= sel.k1 && k <= sel.k2, cfs[c.key])).join("")}</div>`;
     }
     rowsEl.innerHTML = out;
+    wantDriveNames();
     if (last >= first) for (let p = Math.floor(first / PAGE); p <= Math.floor(last / PAGE); p++) loadPage(p);
     placeFill();
   }
@@ -276,6 +329,55 @@ export async function mount(el, params, ctx) {
     } catch (e) { toast(e.message, "bad"); }
   }
 
+  // ---- popup calendar for date cells: pick a day instead of typing it (typing still works)
+  const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const dateOf = (text) => {
+    const m = /^\s*([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/.exec(text) || null;
+    if (m) { const mo = MONTH.findIndex((x) => x.toLowerCase() === m[1].toLowerCase()); if (mo >= 0) return { y: +m[3], m: mo, d: +m[2] }; }
+    const n = /^\s*(\d{4})-(\d{2})-(\d{2})/.exec(text) || null;
+    if (n) return { y: +n[1], m: +n[2] - 1, d: +n[3] };
+    const u = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(text) || null;
+    return u ? { y: +u[3], m: +u[1] - 1, d: +u[2] } : null;
+  };
+  function drawCalendar() {
+    const e = st.edit;
+    if (!e || list[e.k].kind !== "date") return;
+    const today = new Date(Date.now() - tzEastern.off * 60000), now = { y: today.getUTCFullYear(), m: today.getUTCMonth(), d: today.getUTCDate() };
+    const picked = dateOf(e.ta.value);
+    const view = e.cal && !e.calFollow ? e.cal : { y: (picked || now).y, m: (picked || now).m };
+    e.cal = view; e.calFollow = false;
+    let el = e.calEl;
+    if (!el) {
+      el = e.calEl = document.createElement("div");
+      el.className = "datepop";
+      el.onmousedown = (ev) => ev.preventDefault(); // keep the cell editor focused, so it does not close
+      el.onclick = (ev) => {
+        const b = ev.target.closest("[data-cal]");
+        if (!b) return;
+        const act = b.dataset.cal;
+        if (act === "prev" || act === "next") { e.cal = { y: e.cal.y + (act === "next" && e.cal.m === 11 ? 1 : act === "prev" && e.cal.m === 0 ? -1 : 0), m: (e.cal.m + (act === "next" ? 1 : 11)) % 12 }; return drawCalendar(); }
+        if (act === "clear") { e.ta.value = ""; return finishEdit(true); }
+        const [y, m, d] = act === "today" ? [now.y, now.m, now.d] : b.dataset.cal.split("-").map(Number);
+        const time = /\d{1,2}:\d{2}\s*[AP]M\s*$/i.exec(e.ta.value);  // a date with a time keeps its time
+        e.ta.value = `${MONTH[m]} ${d}, ${y}${time ? " " + time[0].trim() : ""}`;
+        finishEdit(true);
+      };
+      body.append(el);
+    }
+    const first = new Date(Date.UTC(view.y, view.m, 1)).getUTCDay(), days = new Date(Date.UTC(view.y, view.m + 1, 0)).getUTCDate();
+    const cells = [];
+    for (let i = 0; i < first; i++) cells.push("<i></i>");
+    for (let d = 1; d <= days; d++) {
+      const cls = [picked && picked.y === view.y && picked.m === view.m && picked.d === d ? "sel" : "", now.y === view.y && now.m === view.m && now.d === d ? "today" : ""].join(" ");
+      cells.push(`<button type="button" class="${cls}" data-cal="${view.y}-${view.m}-${d}">${d}</button>`);
+    }
+    el.innerHTML = `<div class="dp-head"><button type="button" data-cal="prev" aria-label="Previous month">‹</button><b>${MONTH_FULL[view.m]} ${view.y}</b><button type="button" data-cal="next" aria-label="Next month">›</button></div>
+      <div class="dp-grid">${["S", "M", "T", "W", "T", "F", "S"].map((x) => `<span>${x}</span>`).join("")}${cells.join("")}</div>
+      <div class="dp-foot"><button type="button" data-cal="today">Today</button><button type="button" data-cal="clear">Clear</button></div>`;
+    placeEditor();
+  }
+
   // ---- in-cell editor
   function startEdit(initial) {
     const a = st.act, row = a && rowAt(a.r), c = a && list[a.k];
@@ -296,8 +398,9 @@ export async function mount(el, params, ctx) {
     placeEditor();
     ta.focus();
     if (initial === undefined) ta.setSelectionRange(ta.value.length, ta.value.length); else ta.setSelectionRange(initial.length, initial.length);
-    ta.oninput = placeEditor;
+    ta.oninput = () => { placeEditor(); if (st.edit?.calEl) { st.edit.calFollow = true; drawCalendar(); } };
     ta.onblur = () => finishEdit(true);
+    if (c.kind === "date") drawCalendar();
     ta.onkeydown = (e) => {
       if (e.key === "Enter" && e.altKey) { e.preventDefault(); ta.setRangeText("\n", ta.selectionStart, ta.selectionEnd, "end"); placeEditor(); }
       else if (e.key === "Enter") { e.preventDefault(); finishEdit(true, e.shiftKey ? -1 : 1, 0); }
@@ -311,6 +414,7 @@ export async function mount(el, params, ctx) {
     const e = st.edit;
     if (!e) return;
     const left = e.k === 0 ? sc.scrollLeft + RN_W : lefts[e.k];
+    if (e.calEl) e.calEl.style.cssText = `top:${(e.r + 1) * ROW_H + 2}px;left:${left}px`;
     e.ta.style.cssText = `top:${e.r * ROW_H}px;left:${left}px;width:${Math.max(width(list[e.k]), 140)}px;height:${ROW_H}px`;
     e.ta.style.height = Math.min(160, Math.max(ROW_H, e.ta.scrollHeight)) + "px";
     e.ta.classList.toggle("pinned", e.k === 0);
@@ -322,6 +426,7 @@ export async function mount(el, params, ctx) {
     st.edit = null;
     e.ta.onblur = null;
     e.ta.remove();
+    e.calEl?.remove();
   }
   function finishEdit(save, dr = 0, dk = 0) {
     const e = st.edit;
@@ -330,6 +435,7 @@ export async function mount(el, params, ctx) {
     e.ta.onblur = null;
     const value = e.ta.value;
     e.ta.remove();
+    e.calEl?.remove();
     if (save) {
       const c = list[e.k], shown = c.kind === "date" ? showDate(e.ta.dataset.orig) : e.ta.dataset.orig;
       if (value !== shown) commit([{ r: e.r, k: e.k, value }]);

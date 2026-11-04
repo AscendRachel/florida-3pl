@@ -297,3 +297,107 @@ main:has(.cardgrid) { max-width: 2200px; padding-left: clamp(16px, 2.5vw, 48px);
 .legend-text { padding: 10px 12px; font-size: 13px; line-height: 1.4; color: var(--ink); }
 a.legend-card { color: inherit; text-decoration: none; cursor: pointer; transition: transform .12s, box-shadow .12s; }
 a.legend-card:hover, a.legend-card:focus-visible { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+
+/* popup calendar under a date cell being edited */
+.datepop { position: absolute; z-index: 30; width: 236px; padding: 8px; background: var(--panel, #fff); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.dp-head button, .dp-foot button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 4px 10px; border-radius: 6px; }
+.dp-head button:hover, .dp-foot button:hover, .dp-grid button:hover { background: var(--soft); }
+.dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.dp-grid span { font-size: 11px; color: var(--muted); padding: 2px 0; }
+.dp-grid button { background: none; border: 0; color: inherit; font: inherit; font-size: 13px; height: 28px; border-radius: 50%; cursor: pointer; }
+.dp-grid button.today { outline: 1px solid var(--brand); }
+.dp-grid button.sel { background: var(--brand); color: #fff; }
+.dp-foot { display: flex; justify-content: space-between; margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+
+/* Order Cards: the All Orders / Store Returns switch */
+.cardtabs { display: inline-flex; padding: 3px; gap: 2px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
+.cardtabs a { padding: 6px 16px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 14px; }
+.cardtabs a:hover { color: var(--ink); }
+.cardtabs a.on { background: var(--panel); color: var(--brand); box-shadow: var(--shadow); }
+
+.cardtotal { display: flex; align-items: center; gap: 28px; padding: 12px 18px; margin-bottom: 14px; font-size: 13px; color: var(--muted); letter-spacing: .02em; }
+.cardtotal b { font-size: 20px; font-weight: 600; color: var(--ink); }
+.cardopt[hidden] { display: none; }
+
+/* Returns > Kohl's Returns: a sheet-like list, every cell is an input */
+.kstore { height: 38px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); padding: 0 10px; font: inherit; }
+.kwrap { max-height: calc(100vh - 330px); overflow-y: auto; overflow-x: hidden; }
+main:has(.kwrap) { max-width: 2200px; padding-left: clamp(16px, 2.5vw, 48px); padding-right: clamp(16px, 2.5vw, 48px); }
+.ktable { border-collapse: separate; border-spacing: 0; width: 100%; table-layout: fixed; }
+.ktable td input:not([type=checkbox]), .ktable td select { text-overflow: ellipsis; }
+.ktable th { overflow: hidden; text-overflow: ellipsis; position: sticky; top: 0; z-index: 2; background: #1f4d1a; color: #fff; text-align: center; padding: 8px 10px; font-weight: 700; white-space: nowrap; }
+.ktable td { border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); padding: 0; background: var(--panel); }
+.ktable td input:not([type=checkbox]), .ktable td select { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 7px 10px; height: 34px; }
+.ktable td input:not([type=checkbox]):focus, .ktable td select:focus { outline: 2px solid var(--brand); outline-offset: -2px; background: var(--panel); }
+.ktable td.kn input { text-align: center; }
+.ktable td.kc { text-align: center; }
+.ktable td.kc input { width: 18px; height: 18px; vertical-align: middle; cursor: pointer; }
+.ktable td.klink { position: relative; }
+.ktable td.klink a { position: absolute; left: 8px; top: 7px; text-decoration: none; line-height: 20px; }
+.ktable td.klink a + input { padding-left: 28px; }
+.iconbtn { background: none; border: 0; cursor: pointer; font-size: 14px; padding: 4px; border-radius: 6px; }
+.iconbtn:hover { background: var(--soft); }
+.ktable .kno { width: 44px; text-align: center; color: var(--muted); font-size: 12px; padding: 0 6px; }
+.ktable .kdel { width: 40px; text-align: center; }
+.ktable tr:hover td { background: var(--soft); }
+
+/* Kohl's grid: everything centred in its row */
+.ktable th, .ktable td { vertical-align: middle; }
+.ktable td { height: 36px; }
+.ktable td select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5l3.5 3.5 3.5-3.5' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 26px; }
+.ktable .kno, .ktable th.kno { line-height: 1; padding: 0; text-align: center; vertical-align: middle; }
+.ktable td.kc input[type=checkbox] { display: block; margin: 0 auto; }
+.ktable td.kdel { line-height: 1; }
+.ktable td.kdel .iconbtn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }
+.ktable td input:not([type=checkbox]) { display: block; }
+.ktable td.kn input { text-align: center; }
+
+/* Kohl's grid as a sheet: cells are selected with a click, edited with a double click or Enter */
+.kwrap { outline: none; }
+.ktable td { cursor: cell; user-select: none; position: relative; }
+.ktable td.ksel { outline: 2px solid var(--brand); outline-offset: -2px; background: var(--brand-soft); z-index: 1; }
+.ktable .kv { display: block; padding: 0 10px; line-height: 34px; height: 34px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.ktable td.kn .kv { text-align: center; }
+.ktable td.klink .kv { padding-left: 28px; }
+.ktable td.klink a { position: absolute; left: 8px; top: 0; line-height: 34px; text-decoration: none; }
+.ktable .kedit { width: 100%; height: 34px; border: 0; outline: 2px solid var(--brand); outline-offset: -2px; background: var(--panel); color: inherit; font: inherit; font-size: 13px; padding: 0 10px; user-select: text; }
+.ktable td.kn .kedit { text-align: center; }
+.ktable td.kchipcell { padding: 0 6px; }
+.kchip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 9px; border-radius: 12px; background: var(--soft); border: 1px solid var(--line); font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; vertical-align: middle; }
+.kchip svg { flex: none; color: var(--muted); }
+.kchip:hover { border-color: var(--muted); }
+.kchip.empty { min-width: 34px; justify-content: center; }
+.kmenu { padding: 6px; display: grid; gap: 2px; }
+.kopt { display: flex; align-items: center; width: 100%; text-align: left; background: none; border: 0; border-radius: 8px; padding: 6px 8px; cursor: pointer; font: inherit; color: inherit; }
+.kopt:hover, .kopt.on { background: var(--brand-soft); }
+.kclear { color: var(--muted); font-size: 13px; }
+
+.ktable td.klink .kzoom { position: absolute; left: 4px; top: 5px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--brand); font: inherit; cursor: pointer; }
+.ktable td.klink .kzoom:hover { background: var(--soft); }
+
+/* Drive links in All Orders: the file name as the link, a preview of the file on hover */
+.gc a[data-fid] { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drivecard { position: fixed; z-index: 80; width: 340px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.35); overflow: hidden; }
+.dc-name { padding: 10px 12px; font-weight: 600; font-size: 13px; word-break: break-all; border-bottom: 1px solid var(--line); }
+.drivecard iframe { display: block; width: 100%; height: 420px; border: 0; background: #fff; }
+
+/* worked-out cells of a sheet list (Materials) */
+.ktable td.kro { background: var(--soft); }
+.ktable td.kro .kv { color: var(--muted); }
+.ktable td.st-good .kv { color: var(--ok); font-weight: 700; }
+.ktable td.st-warn .kv { color: #c77c00; font-weight: 700; }
+.ktable td.st-bad .kv { color: var(--crit, #c62828); font-weight: 700; }
+.ktable td.kn .kv, .ktable td.kro .kv { text-align: center; }
+
+/* Order Cards > Materials */
+.oc-img.mat { height: 190px; }
+.oc-img.mat img { object-fit: contain; cursor: zoom-in; }
+.mat-id { display: block; font-size: 15px; font-weight: 700; }
+.mat-name { font-size: 20px; font-weight: 700; line-height: 1.25; }
+.mat-status.st-good { color: var(--ok); font-weight: 700; }
+.mat-status.st-warn { color: #c77c00; font-weight: 700; }
+.mat-status.st-bad { color: var(--crit, #c62828); font-weight: 700; }
+
+/* Order Cards > Item on Hold */
+.oc-hold { font-weight: 700; font-size: 15px; line-height: 1.35; margin: 0 0 10px; }
