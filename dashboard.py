@@ -64,6 +64,11 @@ def _hours(rows, ops):
     return table
 
 
+def hours(rows):
+    """Stock sorts: (hour, operator, count) rows as the same 24-row table as the shipping ones."""
+    return _hours(rows, operators())
+
+
 def _by_hour(db, col, stamp_name, kind, day):
     """(hour, operator, count) of the packages stamped on `day`. The operator is the one who did THAT shipping step (the ship
     record), so a later scan by someone else (a return to Amazon) does not take the count away; older rows fall back to Updated by."""

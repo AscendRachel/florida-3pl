@@ -1,4 +1,5 @@
 // Dashboard: the day's numbers (the sheet's Dashboard tab). Times are US Eastern, the warehouse's clock.
+import { mountChat } from "./chat-bubble.js";
 import { textOn } from "./cond-format.js";
 import { $, api, brand, dialog, esc, fmt, toast, tzEastern } from "./util.js";
 
@@ -60,9 +61,10 @@ export async function mount(el, params, ctx) {
       <div class="dash-legend-head"><h3>Rows color legend</h3><span class="muted">Always refer to the row color in All Orders to understand the status of an order and take the appropriate action.</span></div>
       <div class="dash-cards dash-legend">${LEGEND.map(([name, hex, text], i) => `<a class="legend-card" href="#orders?color=${encodeURIComponent(hex)}" title="Show the ${esc(name)} orders in All Orders" style="--lg:${hex};--lg-fg:${textOn(hex)}"><div class="legend-title"><span class="legend-n">${i + 1}</span>${esc(name)}</div>
         <div class="legend-text">${esc(text)}</div></a>`).join("")}</div>
-      <div class="dash-tables">
+      <div class="dash-tables dash-two">
         ${table("All Orders", data.orders, data.operators, data.orders_total, "Shipped to customer, by the hour")}
         ${table("Store Returns", data.returns, data.operators, data.returns_total, "Shipped to Amazon, by the hour")}
+        ${table("Stock Sorting", data.sorting, data.operators, data.sorting_total, "Stock no. put on a stock item, by the hour")}
       </div>`;
   }
 
@@ -112,6 +114,7 @@ export async function mount(el, params, ctx) {
 
   // live: look at the app's change counter every 2 seconds and redraw as soon as anything changed (a scan, a tick, a sync)
   await load();
+  mountChat(); // the floating Work Log chat
   let knownV = (await api("/api/version")).v;
   clearInterval(window.__dashTimer);
   window.__dashTimer = setInterval(async () => {

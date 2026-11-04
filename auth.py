@@ -34,7 +34,39 @@ def conn():
     db.row_factory = sqlite3.Row
     for q in SCHEMA:
         db.execute(q)
+    if "tabs" not in [r[1] for r in db.execute("PRAGMA table_info(users)")]:
+        db.execute("ALTER TABLE users ADD COLUMN tabs TEXT DEFAULT ''")  # '' = every tab
     return db
+
+
+# The tabs an admin can hand out to a member (Amazon Orders, Import and Team are admin-only).
+ROLES = ("admin", "warehouse", "member")
+TABS = ("dashboard", "scan", "cards", "orders", "returns", "materials")
+# Data that belongs to one tab (any of the tabs listed may read it). Shared data (orders, meta ...) stays open to every signed-in user.
+API_TABS = {"/api/dashboard": ("dashboard",), "/api/materials": ("materials", "cards"), "/api/returns": ("returns", "cards"), "/api/kohls": ("returns", "cards")}
+
+
+def parse_tabs(value):
+    """The stored text as a list of tab keys, or None for 'every tab'."""
+    got = [t for t in (value or "").split(",") if t in TABS]
+    return got or None
+
+
+def clean_tabs(tabs):
+    got = [t for t in TABS if t in (tabs or [])]
+    if not got:
+        raise ValueError("Pick at least one tab.")
+    return ",".join(got) if len(got) < len(TABS) else ""
+
+
+def tab_allowed(user, path):
+    """False when the user's tabs do not include the tab that owns this API path."""
+    if user.get("role") == "admin" or not user.get("tabs"):
+        return True
+    for prefix, owners in API_TABS.items():
+        if path == prefix or path.startswith(prefix + "/"):
+            return any(t in user["tabs"] for t in owners)
+    return True
 
 
 def hash_pw(password, salt):
@@ -55,22 +87,23 @@ def _check_password(password):
         raise ValueError("Password must be at least 8 characters.")
 
 
-def add_user(username, name, password, role="member"):
+def add_user(username, name, password, role="member", tabs=None):
     username = (username or "").strip().lower()
+    tabs_text = clean_tabs(tabs) if tabs is not None and role != "admin" else ""
     if not re.fullmatch(r"[a-z0-9._\-]{3,30}", username):
         raise ValueError("Username: 3 to 30 letters, numbers, dots, dashes or underscores.")
     _check_password(password)
-    if role not in ("admin", "member"):
-        raise ValueError("Role must be admin or member.")
+    if role not in ROLES:
+        raise ValueError("Role must be Admin, Warehouse or Member.")
     salt = secrets.token_hex(16)
     with LOCK:
         db = conn()
         try:
             if db.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
                 raise ValueError("That username is taken.")
-            db.execute("INSERT INTO users (username, name, pw_hash, salt, role, created_at) VALUES (?,?,?,?,?,?)",
+            db.execute("INSERT INTO users (username, name, pw_hash, salt, role, created_at, tabs) VALUES (?,?,?,?,?,?,?)",
                        (username, (name or username).strip()[:60] or username, hash_pw(password, salt), salt, role,
-                        clock.now().strftime("%Y-%m-%d %H:%M")))
+                        clock.now().strftime("%Y-%m-%d %H:%M"), tabs_text))
             db.commit()
         finally:
             db.close()
@@ -125,11 +158,15 @@ def session_user(token):
     with LOCK:
         db = conn()
         try:
-            r = db.execute("""SELECT u.username, u.name, u.role FROM sessions s JOIN users u ON u.username = s.username
+            r = db.execute("""SELECT u.username, u.name, u.role, u.tabs FROM sessions s JOIN users u ON u.username = s.username
                 WHERE s.token = ? AND s.expires > ? AND u.disabled = 0""", (token, time.time())).fetchone()
         finally:
             db.close()
-    return dict(r) if r else None
+    if not r:
+        return None
+    u = dict(r)
+    u["tabs"] = None if u["role"] == "admin" else parse_tabs(u["tabs"])
+    return u
 
 
 def end_session(token):
@@ -146,7 +183,22 @@ def list_users():
     with LOCK:
         db = conn()
         try:
-            return [dict(r) for r in db.execute("SELECT username, name, role, created_at FROM users WHERE disabled = 0 ORDER BY role, username")]
+            rows = [dict(r) for r in db.execute("SELECT username, name, role, created_at, tabs FROM users WHERE disabled = 0 ORDER BY role, username")]
+        finally:
+            db.close()
+    for r in rows:
+        r["tabs"] = None if r["role"] == "admin" else parse_tabs(r["tabs"])
+    return rows
+
+
+def set_tabs(username, tabs):
+    text = clean_tabs(tabs)
+    with LOCK:
+        db = conn()
+        try:
+            if not db.execute("UPDATE users SET tabs = ? WHERE username = ? AND disabled = 0", (text, username)).rowcount:
+                raise ValueError("No such user.")
+            db.commit()
         finally:
             db.close()
 
@@ -174,8 +226,8 @@ def remove_user(username, by):
 
 
 def set_role(username, role, by):
-    if role not in ("admin", "member"):
-        raise ValueError("Role must be admin or member.")
+    if role not in ROLES:
+        raise ValueError("Role must be Admin, Warehouse or Member.")
     with LOCK:
         db = conn()
         try:

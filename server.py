@@ -9,6 +9,8 @@ import clock
 import dashboard
 import drivenames
 import materials
+import notify
+import worklog
 import csv, hashlib, io, json, getpass, os, re, sys, sqlite3, tempfile, threading, time, urllib.error, urllib.parse, urllib.request, uuid
 from datetime import datetime, timedelta
 from http.cookies import SimpleCookie
@@ -29,6 +31,8 @@ UPLOADS = DATA / "uploads"
 returns.DB = DATA / "returns.db"
 drivenames.DB = DATA / "drive.db"
 materials.DB = DATA / "materials.db"
+worklog.DB = DATA / "worklog.db"
+notify.DB = DATA / "notify.db"
 auth.DB = DATA / "auth.db"
 locks.FILE = DATA / "locks.json"
 # only admins may do these: they change what everybody sees or how the data is loaded
@@ -45,7 +49,7 @@ RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the 
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
 # The version people see (sign-in page and the tag in the app). Raise it when a new version is pushed: 1.0.1 -> 1.0.2 for a fix, 1.1.0 for a new feature.
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.8.0"
 PORT = int(os.environ.get("PORT", "8765"))
 MAX_UPLOAD = 300 * 1024 * 1024
 
@@ -830,6 +834,9 @@ class Handler(BaseHTTPRequestHandler):
         if admin and u["role"] != "admin":
             self.send_json({"error": "Only admins can do this."}, 403)
             return None
+        if not auth.tab_allowed(u, urllib.parse.urlparse(self.path).path):
+            self.send_json({"error": "Your account does not have access to this tab."}, 403)
+            return None
         self.user = u
         return u
 
@@ -867,7 +874,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"setup": auth.user_count() == 0, "allowed": self.is_local_direct()})
         if u.path.startswith("/static/"):
             return self.static(u.path)
-        user = self.need_user(admin=u.path in ("/api/team", "/api/trash"))
+        user = self.need_user(admin=u.path in ("/api/team", "/api/trash", "/api/worklog"))
         if not user:
             return
         try:
@@ -877,6 +884,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(self.api_dashboard(params))
             if u.path == "/api/team":
                 return self.send_json({"items": auth.list_users()})
+            if u.path == "/api/notify":  # the bell: notes other people wrote (for accounts that can open All Orders)
+                if user["role"] != "admin" and user.get("tabs") and "orders" not in user["tabs"]:
+                    return self.send_json({"items": [], "unread": 0})
+                with notify.LOCK:
+                    db = notify.connect()
+                    try:
+                        return self.send_json(notify.feed(db, user["username"]))
+                    finally:
+                        db.close()
+            if u.path == "/api/chat":  # the bubble: this person's own messages of today
+                with worklog.LOCK:
+                    db = worklog.connect()
+                    try:
+                        today = clock.now().strftime("%Y-%m-%d")
+                        return self.send_json({"today": today, "items": worklog.mine(db, user["username"], today)})
+                    finally:
+                        db.close()
+            if u.path == "/api/worklog":  # admins: everybody's messages
+                with worklog.LOCK:
+                    db = worklog.connect()
+                    try:
+                        out = worklog.search(db, str((params.get("date") or [""])[0]), str((params.get("user") or [""])[0]), str((params.get("q") or [""])[0]))
+                    finally:
+                        db.close()
+                out["today"] = clock.now().strftime("%Y-%m-%d")
+                return self.send_json(out)
             if u.path == "/api/views":
                 return self.send_json({"views": load_views()})
             if u.path == "/api/ship-events":
@@ -963,6 +996,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(save_branding(json.loads(self.body() or b"{}")))
             if path == "/api/dashboard/operators":
                 return self.send_json({"operators": dashboard.save_operators(json.loads(self.body() or b"{}").get("operators"))})
+            if path == "/api/notify/seen":
+                with notify.LOCK:
+                    db = notify.connect()
+                    try:
+                        notify.mark_seen(db, user["username"])
+                    finally:
+                        db.close()
+                return self.send_json({"ok": True})
+            if path == "/api/chat/send":
+                b = json.loads(self.body() or b"{}")
+                with worklog.LOCK:
+                    db = worklog.connect()
+                    try:
+                        item = worklog.add(db, user["username"], user["name"], b.get("text"))
+                    finally:
+                        db.close()
+                bump()
+                return self.send_json({"item": item})
             if path == "/api/me/password":
                 return self.api_change_password(json.loads(self.body() or b"{}"))
             if path.startswith("/api/team/"):
@@ -1041,7 +1092,9 @@ class Handler(BaseHTTPRequestHandler):
     def api_team(self, path, b):
         me = self.user["username"]
         if path == "/api/team/add":
-            auth.add_user(b.get("username"), b.get("name"), b.get("password"), b.get("role", "member"))
+            auth.add_user(b.get("username"), b.get("name"), b.get("password"), b.get("role", "member"), b.get("tabs"))
+        elif path == "/api/team/tabs":
+            auth.set_tabs(str(b.get("username", "")), b.get("tabs"))
         elif path == "/api/team/reset":
             auth.set_password(str(b.get("username", "")), b.get("password"))
         elif path == "/api/team/remove":
@@ -1099,6 +1152,13 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 db.close()
         out["operators_list"] = dashboard.operators()
+        with returns.LOCK:
+            rdb = returns.connect()
+            try:
+                out["sorting"] = dashboard.hours(returns.sorts_by_hour(rdb, out["date"]))
+            finally:
+                rdb.close()
+        out["sorting_total"] = sum(h["total"] for h in out["sorting"])
         out["today"] = clock.now().strftime("%Y-%m-%d")
         out["now"] = clock.now().strftime("%Y-%m-%d %H:%M")
         return out
@@ -1796,6 +1856,7 @@ class Handler(BaseHTTPRequestHandler):
             db = connect()
             now = clock.now().isoformat(timespec="seconds")
             values, touched, also, shipped_ticks, delivered = [], set(), [], set(), set()
+            stock_sorts, note_events = [], []
             try:
                 for it in items:
                     rn, j = int(it["rn"]), int(it["col"])
@@ -1824,6 +1885,11 @@ class Handler(BaseHTTPRequestHandler):
                                    (now.replace("T", " ")[:16], self.user["name"], rn, j, before[0] or "", v, "Edited"))
                     db.execute("INSERT OR REPLACE INTO edits VALUES (?,?,?,?)", (rn, j, v, now))
                     values.append(v)
+                    if COLUMNS[j] == "Notes" and v and (before[0] or "") != v:
+                        who = db.execute(f"SELECT c{IX['Label Number']}, c{IX['Customer Name']} FROM orders WHERE rn = ?", (rn,)).fetchone()
+                        note_events.append((rn, who[0], who[1], COLUMNS[j], v))  # the bell tells the others about the note
+                    if COLUMNS[j] == "STOCK NO." and v and (before[0] or "") != v:
+                        stock_sorts.append((rn, v))  # counted on the Dashboard's Stock Sorting table
                     # ticking Shipped to Customer / Shipped to Amazon stamps the date and time of the tick (clearing it clears the stamp)
                     stamp_col = SHIP_STAMP.get(COLUMNS[j]) and IX.get(SHIP_STAMP[COLUMNS[j]])
                     if COLUMNS[j] == "Source Order Status" and v == "Delivered" and (before[0] or "") != v:
@@ -1875,6 +1941,24 @@ class Handler(BaseHTTPRequestHandler):
                 raise
             finally:
                 db.close()
+        if note_events:
+            with notify.LOCK:
+                ndb = notify.connect()
+                try:
+                    notify.add(ndb, self.user["username"], self.user["name"], self.user["role"], note_events)
+                finally:
+                    ndb.close()
+            bump()
+        if stock_sorts:
+            with returns.LOCK:
+                rdb = returns.connect()
+                try:
+                    for rn, v in stock_sorts:
+                        returns.log_sort(rdb, self.user["name"], "order", rn, v)
+                    rdb.commit()
+                finally:
+                    rdb.close()
+            bump()
         return {"values": values, "also": also, "v": VERSION[0], "skipped": skipped, "reason": reason}
 
 

@@ -314,3 +314,7 @@ main:has(.sheetpage) { max-width: none; padding-top: 14px; padding-bottom: 20px;
 /* an uploaded logo replaces the two-letter mark */
 .logo.logo-img { background: transparent; overflow: hidden; }
 .logo.logo-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* Drive file shown inside the app */
+.lb-doc { grid-template-rows: auto minmax(0, 1fr); }
+.lb-doc iframe { width: 100%; height: 100%; border: 0; background: #fff; }

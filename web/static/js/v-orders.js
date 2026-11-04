@@ -7,13 +7,13 @@ import { lockReason, lockTip, protectDialog, renameDialog } from "./protect.js";
 
 const ROW_H = 30, HEAD_H = 30, FILT_H = 0, RN_W = 52, PAGE = 100;
 const WIDTHS = {
-  "Label Number": 110, "Store Order No.": 190, "Product Name": 360, Brand: 130, QTY: 60,
+  "Label Number": 110, "Gift Note": 250, "Store Order No.": 190, "Product Name": 360, Brand: 130, QTY: 60,
   "Customer Name": 160, Address: 280, "Source Order Date": 130, "Source Order Number": 170,
   "Source Tracking Number": 170, "Shipping Label Link": 300, "Product Image Link": 90, "Source Order Status": 140,
   "Tracking Number To Customer": 190, "Delivery Date": 130, "Tracking Status": 140, Notes: 240, Store: 110,
   "PH Team Internal Notes": 240,
 };
-const DEFAULT_HIDDEN = ["Gift Note", "Print Link", "Number of Orders", "Days In Transit", "Boxes Received", "Boxes Expected",
+const DEFAULT_HIDDEN = ["Print Link", "Number of Orders", "Days In Transit", "Boxes Received", "Boxes Expected",
   "RTS COUNTER", "RTA COUNTER", "Item on Hold Counter", "Store Returns Counter", "All Orders Counter", "Stock Counter",
   "Hold Warning", "Label Chip", "TAPICKER STATUS", "TAPICKER SHIPPED DATE", "TAPICKER DELIVERY DATE"];
 const PILL = {
@@ -38,6 +38,8 @@ export async function mount(el, params, ctx) {
   try { savedViews = (await api("/api/views")).views; } catch { /* the grid still works without saved views */ }
   const cols = meta.columns.filter((c) => !c.name.includes("Softr"));
   const hidden = new Set(readJson("gt_orders_hidden", DEFAULT_HIDDEN));
+  // Gift Note (Label Number + Customer Name) used to start hidden: show it once for everyone who had it hidden; their own choice after that is kept
+  if (store.get("gt_gift_shown", "") !== "1") { hidden.delete("Gift Note"); store.set("gt_gift_shown", "1"); store.set("gt_orders_hidden", JSON.stringify([...hidden])); }
   const widths = readJson("gt_orders_widths", {});
   const st = { q: "", card: "", cf: {}, sort: "", dir: "asc", total: 0, act: null, anc: null, edit: null, rowSel: false };
   const pages = new Map(); // page number -> rows
@@ -598,6 +600,23 @@ export async function mount(el, params, ctx) {
     show(row);
   }
 
+  // ---- a Drive link opens inside the app (the file's own preview); any other link opens in a new tab
+  function openLink(url) {
+    const fid = driveId(url);
+    if (!fid) return void window.open(url, "_blank", "noopener");
+    document.querySelector(".lb")?.remove();
+    const name = driveNames.get(fid) || "";
+    const lb = document.createElement("div");
+    lb.className = "lb lb-doc";
+    lb.innerHTML = `<div class="lb-top"><div class="lb-title"><b>${esc(name || "Drive file")}</b><span>Google Drive</span></div><a class="btn small" href="${esc(url)}" target="_blank" rel="noopener">Open in new tab</a><button class="btn small" data-close>Close ✕</button></div>
+      <iframe src="https://drive.google.com/file/d/${esc(fid)}/preview" referrerpolicy="no-referrer" allow="fullscreen"></iframe>`;
+    const close = () => { lb.remove(); removeEventListener("keydown", onKey, true); sc.focus({ preventScroll: true }); };
+    const onKey = (e) => { if (e.key === "Escape") { close(); e.preventDefault(); e.stopPropagation(); } };
+    lb.onclick = (e) => { if (e.target.closest("[data-close]")) close(); };
+    addEventListener("keydown", onKey, true);
+    document.body.append(lb);
+  }
+
   // ---- mouse
   const cellAt = (t) => {
     const g = t.closest?.(".gc"), r = t.closest?.(".gr");
@@ -605,7 +624,7 @@ export async function mount(el, params, ctx) {
     return { r: +r.dataset.r, k: g.classList.contains("rn") ? -1 : +g.dataset.k, el: g };
   };
   rowsEl.addEventListener("mousedown", (e) => {
-    if (e.button !== 0 || e.target.closest("[data-link]")) return;
+    if (e.button !== 0) return;
     rowDrag = false; dragging = false; // every click starts clean, whatever the last drag left behind
     downAt = e.timeStamp; downXY = [e.clientX, e.clientY];
     const hit = cellAt(e.target);
@@ -620,10 +639,6 @@ export async function mount(el, params, ctx) {
       st.rowSel = true; rowDrag = true; dragging = true;
       paint(); updateBar(); return;
     }
-    if (e.target.classList.contains("thumb")) {
-      select(hit.r, hit.k);
-      return openImage(hit.r);
-    }
     if (hit.el.classList.contains("dd") && e.clientX > hit.el.getBoundingClientRect().right - 24) {
       select(hit.r, hit.k);
       return startDropdown();
@@ -635,9 +650,17 @@ export async function mount(el, params, ctx) {
     const now = Date.now(), again = now - lastDown.t < 400 && lastDown.r === hit.r && lastDown.k === hit.k;
     lastDown = { t: now, r: hit.r, k: hit.k };
     select(hit.r, hit.k, e.shiftKey);
-    if (again) return startEdit();
+    if (again) { // a double click opens a picture or a link; any other cell is edited
+      hideHover();
+      const c = list[hit.k], v = rowAt(hit.r)?.[c.i + 1] || "";
+      if (c.kind === "img" && isUrl(v)) return openImage(hit.r);
+      if (c.kind === "link" && isUrl(v)) return openLink(v);
+      return startEdit();
+    }
     dragging = true;
   });
+  // a single click on a link only selects the cell (the link opens on a double click)
+  rowsEl.addEventListener("click", (e) => { if (e.target.closest("a[data-link]")) e.preventDefault(); });
   rowsEl.addEventListener("mouseover", (e) => {
     // A drag-select only counts while the button is really held, and only when the pointer starts moving soon after the press
     // and really travels. If a release was missed (outside the window, remote desktop, a menu), plain pointer movement
@@ -1497,6 +1520,23 @@ export async function mount(el, params, ctx) {
   // coming from a colour card on the Dashboard: show only the rows painted that colour (Product Name is painted by every status colour and never by the duplicate one)
   const wantColor = params.get("color"), colorCol = cols.find((c) => c.key === "Product Name");
   if (/^#[0-9a-f]{6}$/.test(wantColor || "") && colorCol) { st.q = ""; st.card = ""; st.sort = ""; st.dir = "asc"; st.cf = { [colorCol.i]: { c: null, v: null, k: { list: [wantColor] } } }; $("#q").value = ""; }
+  // coming from a notification: search for that order and pick out the row (and the note's cell)
+  const wantRow = +params.get("row") || 0;
+  if (wantRow) { st.q = params.get("q") || ""; st.card = ""; st.sort = ""; st.dir = "asc"; st.cf = {}; $("#q").value = st.q; }
   renderCards(); drawHead(); fit(); reset();
   loadDupes();
+  if (wantRow) {
+    const noteKey = params.get("field") || "Notes";
+    for (let tries = 0; tries < 40; tries++) {
+      if (!el.isConnected) return;
+      if (pages.has(0)) break;
+      await new Promise((ok) => setTimeout(ok, 100));
+    }
+    const at = [...(pages.get(0) || [])].findIndex((r) => r[0] === wantRow);
+    if (at < 0) return toast("That order could not be found. It may have been deleted or changed.", "bad");
+    let k = list.findIndex((c) => c.key === noteKey);
+    if (k < 0) k = 0;
+    select(at, k);
+    sc.focus({ preventScroll: true });
+  }
 }

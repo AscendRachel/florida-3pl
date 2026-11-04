@@ -62,6 +62,9 @@ def connect():
     db.row_factory = sqlite3.Row
     for q in SCHEMA:
         db.execute(q)
+    # Stock Sorting: one row each time an operator puts a STOCK NO. on an order or a Kohl's row (the Dashboard counts them by hour)
+    db.execute("CREATE TABLE IF NOT EXISTS stock_sorts (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, operator TEXT, source TEXT, ref TEXT, stock_no TEXT)")
+    db.execute("CREATE INDEX IF NOT EXISTS ix_stock_sorts ON stock_sorts (at)")
     if "ovr" not in {r[1] for r in db.execute("PRAGMA table_info(returns)")}:
         db.execute("ALTER TABLE returns ADD COLUMN ovr TEXT DEFAULT ''")  # what people typed over the master sheet's values
     return db
@@ -420,6 +423,16 @@ KOHLS_TEXT = {"store": 60, "stock_no": 60, "sku": 80, "order_number": 60, "produ
 KOHLS_BOOL = ("good", "used")
 
 
+def log_sort(db, operator, source, ref, stock_no):
+    """Count one stock sort: `operator` put `stock_no` on an order (source 'order', ref = row number) or a Kohl's row (source 'kohls')."""
+    db.execute("INSERT INTO stock_sorts (at, operator, source, ref, stock_no) VALUES (?,?,?,?,?)", (stamp(), operator, source, str(ref), stock_no))
+
+
+def sorts_by_hour(db, day):
+    """(hour, operator, count) of the stock sorts on `day`."""
+    return db.execute("SELECT substr(at, 12, 2), operator, COUNT(*) FROM stock_sorts WHERE substr(at, 1, 10) = ? GROUP BY 1, 2", (day,)).fetchall()
+
+
 def kohls_list(db):
     return [dict(r) for r in db.execute("SELECT * FROM kohls ORDER BY id")]
 
@@ -433,8 +446,19 @@ def kohls_add(db, operator, values=None):
     g, u = (_kohls_bool((values or {}).get(k, "")) for k in KOHLS_BOOL)
     cur = db.execute("INSERT INTO kohls (store, stock_no, sku, order_number, product, image, qty, good, used, notes, updated_by, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                      (v["store"], v["stock_no"], v["sku"], v["order_number"], v["product"], v["image"], v["qty"], g, u, v["notes"], operator, stamp()))
+    if v["stock_no"]:
+        log_sort(db, operator, "kohls", cur.lastrowid, v["stock_no"])
     db.commit()
     return dict(db.execute("SELECT * FROM kohls WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+def _note_sort(db, operator, id_, field, new):
+    """A Kohl's STOCK NO. that is now filled in and was not that value before is one stock sort."""
+    if field != "stock_no" or not new:
+        return
+    old = db.execute("SELECT stock_no FROM kohls WHERE id = ?", (id_,)).fetchone()
+    if old is not None and (old[0] or "") != new:
+        log_sort(db, operator, "kohls", id_, new)
 
 
 def kohls_bulk(db, operator, edits, new_rows):
@@ -448,6 +472,7 @@ def kohls_bulk(db, operator, edits, new_rows):
             v = str(e.get("value") if e.get("value") is not None else "").strip()[:KOHLS_TEXT[f]]
         else:
             raise ValueError("That column cannot be edited.")
+        _note_sort(db, operator, int(e.get("id", 0)), f, v)
         db.execute(f"UPDATE kohls SET {f} = ?, updated_by = ?, updated_at = ? WHERE id = ?", (v, operator, stamp(), int(e.get("id", 0))))
         ids.append(int(e.get("id", 0)))
     for values in new_rows[:5000]:
@@ -465,6 +490,7 @@ def kohls_edit(db, id_, field, value, operator):
         v = str(value if value is not None else "").strip()[:KOHLS_TEXT[field]]
     else:
         raise ValueError("That column cannot be edited.")
+    _note_sort(db, operator, id_, field, v)
     db.execute(f"UPDATE kohls SET {field} = ?, updated_by = ?, updated_at = ? WHERE id = ?", (v, operator, stamp(), id_))
     db.commit()
     return dict(db.execute("SELECT * FROM kohls WHERE id = ?", (id_,)).fetchone())

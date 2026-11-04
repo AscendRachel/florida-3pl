@@ -1,5 +1,6 @@
 // App shell: who is signed in, navigation, and the view router. Add the next tabs to VIEWS.
 import { loadBranding } from "./branding.js";
+import { bell, paintBell, startNotifications } from "./notifications.js";
 import { $, api, dialog, esc, store, toast, tzEastern } from "./util.js";
 
 const VIEWS = {
@@ -9,16 +10,19 @@ const VIEWS = {
   orders: { label: "All Orders", mod: "./v-orders.js" },
   returns: { label: "Returns", mod: "./v-returns.js" },
   materials: { label: "Materials", mod: "./v-materials.js" },
+  worklog: { label: "Work Log", mod: "./v-worklog.js", admin: true },
   amazon: { label: "Amazon Orders", mod: "./v-amazon.js", admin: true },
   import: { label: "Import", mod: "./v-import.js", admin: true },
   team: { label: "Team", mod: "./v-team.js", admin: true },
 };
 const ctx = { me: null, isAdmin: () => ctx.me?.role === "admin" };
-const allowed = (k) => VIEWS[k] && (!VIEWS[k].admin || ctx.isAdmin());
+// A member may be limited to some tabs (me.tabs); admins and members without a limit see every tab they are allowed.
+const allowed = (k) => VIEWS[k] && (!VIEWS[k].admin || ctx.isAdmin()) && (ctx.isAdmin() || !ctx.me?.tabs || ctx.me.tabs.includes(k));
 
 export function route() {
   const [name, ...rest] = (location.hash || "#" + store.get("gt_last_view", "dashboard")).slice(1).split("?");
-  return { name: allowed(name) ? name : "dashboard", params: new URLSearchParams(rest.join("?")) };
+  const first = Object.keys(VIEWS).find(allowed) || "dashboard";
+  return { name: allowed(name) ? name : first, params: new URLSearchParams(rest.join("?")) };
 }
 
 function renderNav() {
@@ -29,10 +33,11 @@ function renderNav() {
     .join("");
   const me = ctx.me;
   $("#me").innerHTML = me
-    ? `<span><b>${esc(me.name)}</b> · ${me.role === "admin" ? "Admin" : "Member"}</span>
-       <button class="btn small" id="themeBtn" title="Switch light/dark">◐</button>
+    ? `<span><b>${esc(me.name)}</b> · ${{ admin: "Admin", warehouse: "Warehouse" }[me.role] || "Member"}</span>
+       ${bell()}<button class="btn small" id="themeBtn" title="Switch light/dark">◐</button>
        <button class="btn small" id="pwBtn">Password</button><button class="btn small" id="outBtn">Sign out</button>`
     : "";
+  paintBell();
 }
 
 document.addEventListener("click", async (e) => {
@@ -114,5 +119,6 @@ window.addEventListener("hashchange", show);
     $("#main").innerHTML = `<div class="banner bad">Can't reach the server (${esc(err.message)}).</div>`;
     return;
   }
+  startNotifications();
   show();
 })();
