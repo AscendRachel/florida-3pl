@@ -64,7 +64,6 @@ export async function mount(el, params, ctx) {
   el.innerHTML = `<div class="sheetpage">
     <div class="section-head"><div><div class="eyebrow">${esc(brand.name)}</div><h2>All Orders</h2></div>
       <div class="btnrow"><span class="muted" id="synced"></span></div></div>
-    <div class="qgrid cards" id="cards"></div>
     <div class="toolbar sheetbar">
       <div class="searchbox"><input id="q" type="search" placeholder="Search label, order no., product, customer, tracking…  ( / )" autocomplete="off"></div>
       <button class="btn small primary" id="addRowBtn" title="Add a blank row at the bottom">＋ Add row</button>
@@ -800,6 +799,7 @@ export async function mount(el, params, ctx) {
   }
 
   function renderCards() {
+    if (!$("#cards")) return; // the row of quick-filter cards is not shown in All Orders any more
     $("#cards").innerHTML = meta.cards.map((c) => {
       const on = (st.card || "all") === c.key;
       return `<button class="qcard ${c.tone} ${on ? "on" : ""} ${c.n ? "" : "zero"}" data-card="${c.key}"><span class="qn">${fmt(c.n)}</span><span class="ql">${esc(c.label)}</span><span class="qd">${esc(c.hint)}</span></button>`;
@@ -1356,7 +1356,7 @@ export async function mount(el, params, ctx) {
   }
   function setView(v) {
     const s = v || { q: "", card: "", cf: {}, sort: "", dir: "asc" };
-    st.q = s.q; st.card = s.card; st.cf = JSON.parse(JSON.stringify(known(s.cf))); st.sort = s.sort; st.dir = s.dir;
+    st.q = s.q; st.card = ""; st.cf = JSON.parse(JSON.stringify(known(s.cf))); st.sort = s.sort; st.dir = s.dir;
     $("#q").value = s.q;
     activeId = v ? v.id : "";
     store.set("gt_orders_view", activeId);
@@ -1493,7 +1493,7 @@ export async function mount(el, params, ctx) {
     return renderCards();
   }
   const v0 = activeView();
-  if (v0) { st.q = v0.q; st.card = v0.card; st.cf = JSON.parse(JSON.stringify(known(v0.cf))); st.sort = v0.sort; st.dir = v0.dir; $("#q").value = v0.q; }
+  if (v0) { st.q = v0.q; st.card = ""; st.cf = JSON.parse(JSON.stringify(known(v0.cf))); st.sort = v0.sort; st.dir = v0.dir; $("#q").value = v0.q; }
   // coming from a colour card on the Dashboard: show only the rows painted that colour (Product Name is painted by every status colour and never by the duplicate one)
   const wantColor = params.get("color"), colorCol = cols.find((c) => c.key === "Product Name");
   if (/^#[0-9a-f]{6}$/.test(wantColor || "") && colorCol) { st.q = ""; st.card = ""; st.sort = ""; st.dir = "asc"; st.cf = { [colorCol.i]: { c: null, v: null, k: { list: [wantColor] } } }; $("#q").value = ""; }

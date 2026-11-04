@@ -45,7 +45,7 @@ RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the 
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
 # The version people see (sign-in page and the tag in the app). Raise it when a new version is pushed: 1.0.1 -> 1.0.2 for a fix, 1.1.0 for a new feature.
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 PORT = int(os.environ.get("PORT", "8765"))
 MAX_UPLOAD = 300 * 1024 * 1024
 
