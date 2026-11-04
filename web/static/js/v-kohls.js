@@ -21,7 +21,7 @@ export async function mount(el, params, ctx) {
       { k: "image", name: "Image link", kind: "link", w: 160 },
       { k: "qty", name: "QTY", kind: "num", w: 54 },
       { k: "good", name: "GOOD CONDITION", kind: "bool", w: 110 },
-      { k: "used", name: "USED", kind: "bool", w: 60 },
+      { k: "used", name: "SHIPPED TO CUSTOMER", kind: "bool", w: 130 },
       { k: "notes", name: "Notes", kind: "text", w: 200 },
     ],
     filter: { k: "store", all: "All stores" },

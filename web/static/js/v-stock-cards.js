@@ -44,7 +44,7 @@ export async function mount(el, params, ctx) {
   const stockNo = (it) => (it.kind === "order" ? val(it.r, "STOCK NO.") : it.r.stock_no || "");
   const facts = (it) => (it.kind === "order"
     ? { store: val(it.r, "Store"), ostatus: val(it.r, "Source Order Status"), toCustomer: val(it.r, "Shipped to Customer") || "FALSE", toAmazon: val(it.r, "Shipped to Amazon") || "FALSE", tracking: val(it.r, "Tracking Status") }
-    : { store: it.r.store || "", ostatus: "", toCustomer: "", toAmazon: "", tracking: "" });
+    : { store: it.r.store || "", ostatus: "", toCustomer: it.r.used === "TRUE" ? "TRUE" : "FALSE", toAmazon: "", tracking: "" }); // a Kohl's row keeps Shipped to Customer in its "used" field
   const hay = (it) => (it.kind === "order"
     ? ["Label Number", "Store Order No.", "Product Name", "Customer Name", "Brand", "SKU", "STOCK NO.", "Source Order Number", "Tracking Number To Customer", "Source Tracking Number", "Notes", "Store"].map((k) => val(it.r, k)).join(" ")
     : [it.r.store, it.r.stock_no, it.r.sku, it.r.order_number, it.r.product, it.r.notes].join(" ")).toLowerCase();
@@ -170,7 +170,7 @@ export async function mount(el, params, ctx) {
         ${field("Quantity of this Product:", esc(r.qty))}
         <hr>
         ${field("Good Condition:", `<span class="flag ${r.good === "TRUE" ? "yes" : ""}">${flag(r.good)}</span>`)}
-        ${field("Used:", `<span class="flag ${r.used === "TRUE" ? "yes" : ""}">${flag(r.used)}</span>`)}
+        ${field("Shipped to Customer:", `<span class="flag ${r.used === "TRUE" ? "yes" : ""}">${flag(r.used)}</span>`)}
         ${field("Notes:", `<small>${esc(r.notes)}</small>`)}
       </div>
       <div class="oc-actions"><button class="btn primary" data-edit="${key}">Edit</button></div>
@@ -217,12 +217,11 @@ export async function mount(el, params, ctx) {
   async function editKohls(it) {
     const r = it.r;
     const res = await dialog({
-      title: `${r.store || "Kohl's"} · ${r.sku || r.order_number || "stock"}`,
-      wide: true,
-      body: `<label class="field"><span>STOCK NO.</span><input name="stock_no" value="${esc(r.stock_no)}" autocomplete="off"></label>
-        <label class="field"><span>Notes</span><textarea name="notes" rows="3">${esc(r.notes)}</textarea></label>
-        <div class="checkgrid"><label class="check"><input type="checkbox" name="good" ${r.good === "TRUE" ? "checked" : ""}> Good condition</label><label class="check"><input type="checkbox" name="used" ${r.used === "TRUE" ? "checked" : ""}> Used</label></div>`,
-      actions: [["Cancel", "close"], ["Save", "ok", "primary"]],
+      title: "Update record",
+      body: `<label class="field"><span>Add Notes:</span><textarea name="notes" rows="2">${esc(r.notes)}</textarea></label>
+        <label class="field"><span>STOCK NO. *</span><input name="stock_no" value="${esc(r.stock_no)}" required autocomplete="off"></label>
+        <div class="checkgrid"><label class="check"><input type="checkbox" name="good" ${r.good === "TRUE" ? "checked" : ""}> Good condition</label><label class="check"><input type="checkbox" name="used" ${r.used === "TRUE" ? "checked" : ""}> Shipped to Customer</label></div>`,
+      actions: [["Cancel", "close"], ["Update", "ok", "primary"]],
     });
     if (res.value !== "ok") return;
     const f = new FormData(res.el.querySelector("form"));
