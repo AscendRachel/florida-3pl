@@ -224,7 +224,7 @@ export async function mount(el, params, ctx) {
     if (sel) cls += st.act.r === r && st.act.k === i ? " a" : " s";
     if (dvMap.has(`${rn}:${c.i}`)) cls += " dd";
     if (why(c, rn)) cls += " ro locked";
-    if (c.formula) cls += " calc";
+    if (c.formula && c.name !== "Gift Note") cls += " calc"; // calculated cells are italic, except Gift Note (it is searched like normal text)
     return `<div class="gc${cls}" data-k="${i}" style="${style}"${c.kind === "text" && v ? ` title="${esc(v)}"` : ""}>${h}</div>`;
   }
 
@@ -713,7 +713,7 @@ export async function mount(el, params, ctx) {
       if (e.key.startsWith("Arrow") || e.key === "Tab") { e.preventDefault(); select(0, 0); }
       return;
     }
-    const mv = (dr, dk) => { e.preventDefault(); if (mod && (dr || dk)) { dr = dr * 1e9; dk = dk * 1e9; } select(a.r + dr, a.k + dk, e.shiftKey); };
+    const mv = (dr, dk) => { e.preventDefault(); if (mod && (dr || dk)) return jump(a, dr, dk, e.shiftKey); select(a.r + dr, a.k + dk, e.shiftKey); };
     switch (e.key) {
       case "ArrowDown": return mv(1, 0);
       case "ArrowUp": return mv(-1, 0);
@@ -734,6 +734,34 @@ export async function mount(el, params, ctx) {
     }
     if (!mod && !e.altKey && e.key.length === 1) { e.preventDefault(); startEdit(e.key); }
   });
+
+  // Ctrl+Arrow like Google Sheets: from a filled cell go to the last filled cell of the block; from an empty cell (or the end of a
+  // block) go to the next filled cell; with none left, go to the edge of the sheet. Pages that are not loaded yet are fetched on the way.
+  let jumping = 0;
+  async function jump(a, dr, dk, extend) {
+    const my = ++jumping;
+    const cellAt = async (r, k) => {
+      await loadPage(Math.floor(r / PAGE));
+      const row = rowAt(r);
+      return row ? row[list[k].i + 1] || "" : "";
+    };
+    let r = a.r, k = a.k;
+    const last = dr ? st.total - 1 : list.length - 1;
+    const pos = () => (dr ? r : k), step = dr || dk;
+    const filled = (p) => cellAt(dr ? p : r, dr ? k : p).then((v) => v !== "");
+    const edge = step > 0 ? last : 0;
+    let p = pos();
+    if (p !== edge) {
+      if ((await filled(p)) && (await filled(p + step))) {
+        while (p !== edge && (await filled(p + step))) { p += step; if (my !== jumping) return; }
+      } else {
+        p += step;
+        while (p !== edge && !(await filled(p))) { p += step; if (my !== jumping) return; }
+      }
+    }
+    if (my !== jumping) return;
+    select(dr ? p : r, dr ? k : p, extend);
+  }
 
   // Space over a block of checkboxes ticks them all, or unticks them all when they were all ticked (like Sheets)
   async function toggleChecks() {

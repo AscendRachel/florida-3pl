@@ -68,6 +68,8 @@ def delivered_cleanup(orders, rn, note="Delivered"):
     if not d:
         return {}
     writes = {}
+    if not d["Delivered to Warehouse Date"]:
+        writes["Delivered to Warehouse Date"] = stamp(now())  # the Dashboard's "Packages Arrived Today" counts this date
     if d["ITEM ON HOLD"] == "TRUE":
         writes["ITEM ON HOLD"] = "FALSE"
         if d["Hold Date"]:

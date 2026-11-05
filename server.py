@@ -49,7 +49,7 @@ RETURN_LABELS_FILE = DATA / "return_labels.json"  # new names an admin gave the 
 VIEWS_FILE = DATA / "views.json"  # saved filter views, kept apart from the orders so an import never deletes them
 SCHEMA_FILE = DATA / "schema.json"  # the list of columns: what the admins added and deleted
 # The version people see (sign-in page and the tag in the app). Raise it when a new version is pushed: 1.0.1 -> 1.0.2 for a fix, 1.1.0 for a new feature.
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.8.1"
 PORT = int(os.environ.get("PORT", "8765"))
 MAX_UPLOAD = 300 * 1024 * 1024
 
@@ -351,8 +351,18 @@ def ensure_db():
     sync_table_columns()
     db = sqlite3.connect(DB)
     recompute_formulas(db)
+    backfill_arrivals(db)
     db.commit()
     db.close()
+
+
+def backfill_arrivals(db):
+    """Rows that became Delivered before the app stamped "Delivered to Warehouse Date" (Amazon imports): take the date from the
+    edit history, so the Dashboard's "Packages Arrived Today" counts them on the day they were marked. Rows that already have a date are left alone."""
+    st, dt = IX["Source Order Status"], IX["Delivered to Warehouse Date"]
+    db.execute(f"UPDATE orders SET c{dt} = (SELECT substr(MAX(e.at), 1, 16) FROM edit_log e WHERE e.rn = orders.rn AND e.col = {st} AND e.new = 'Delivered') "
+               f"WHERE c{st} = 'Delivered' AND COALESCE(c{dt}, '') = '' "
+               f"AND EXISTS (SELECT 1 FROM edit_log e WHERE e.rn = orders.rn AND e.col = {st} AND e.new = 'Delivered')")
 
 
 # ---------------------------------------------------------------- import
@@ -1149,6 +1159,8 @@ class Handler(BaseHTTPRequestHandler):
             db = connect()
             try:
                 out = dashboard.compute(day, col, db)
+                # how many rows have each row colour right now (the same rules All Orders paints and filters by)
+                out["colors"] = {r[0]: r[1] for r in db.execute(f"SELECT {fill_expr(IX['Label Number'])} AS f, COUNT(*) FROM orders GROUP BY f") if r[0]}
             finally:
                 db.close()
         out["operators_list"] = dashboard.operators()

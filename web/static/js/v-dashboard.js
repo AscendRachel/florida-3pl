@@ -59,7 +59,7 @@ export async function mount(el, params, ctx) {
       <div class="dash-cards dash-counters">${data.counters.map((c) => `<div class="scard neutral dash-card" title="${esc(c.note)}"><div class="dash-n">${fmt(c.n)}</div>
         <div class="dash-l">${esc(c.label)}<div class="muted">${esc(c.note)}</div></div></div>`).join("")}</div>
       <div class="dash-legend-head"><h3>Rows color legend</h3><span class="muted">Always refer to the row color in All Orders to understand the status of an order and take the appropriate action.</span></div>
-      <div class="dash-cards dash-legend">${LEGEND.map(([name, hex, text], i) => `<a class="legend-card" href="#orders?color=${encodeURIComponent(hex)}" title="Show the ${esc(name)} orders in All Orders" style="--lg:${hex};--lg-fg:${textOn(hex)}"><div class="legend-title"><span class="legend-n">${i + 1}</span>${esc(name)}</div>
+      <div class="dash-cards dash-legend">${LEGEND.map(([name, hex, text], i) => `<a class="legend-card" href="#orders?color=${encodeURIComponent(hex)}" title="Show the ${esc(name)} orders in All Orders" style="--lg:${hex};--lg-fg:${textOn(hex)}"><div class="legend-title"><span class="legend-n">${i + 1}</span>${esc(name)}<span class="legend-count" title="Rows with this color right now">${fmt((data.colors || {})[hex] || 0)}</span></div>
         <div class="legend-text">${esc(text)}</div></a>`).join("")}</div>
       <div class="dash-tables dash-two">
         ${table("All Orders", data.orders, data.operators, data.orders_total, "Shipped to customer, by the hour")}
